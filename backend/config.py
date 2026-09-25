@@ -37,6 +37,12 @@ class AppConfig:
     verifier_cache_max_size: int
     verifier_cache_positive_ttl_seconds: float
     verifier_cache_negative_ttl_seconds: float
+    upload_chunk_bytes: int
+    upload_stream_threshold_bytes: int
+    upload_max_bytes: int
+    upload_temp_dir: str | None
+    retention_worker_enabled: bool
+    retention_interval_seconds: int
     # External evidence fetch safety bounds
     external_fetch_connect_timeout_seconds: float
     external_fetch_read_timeout_seconds: float
@@ -84,6 +90,13 @@ def load_config() -> AppConfig:
         verifier_cache_max_size=_int_env("VERIFIER_CACHE_MAX_SIZE", 10000),
         verifier_cache_positive_ttl_seconds=_float_env("VERIFIER_CACHE_POSITIVE_TTL_SECONDS", 86400.0),
         verifier_cache_negative_ttl_seconds=_float_env("VERIFIER_CACHE_NEGATIVE_TTL_SECONDS", 300.0),
+        upload_chunk_bytes=_upload_chunk_bytes(),
+        upload_stream_threshold_bytes=_int_env("UPLOAD_STREAM_THRESHOLD_BYTES", 1_048_576),
+        upload_max_bytes=_int_env("UPLOAD_MAX_BYTES", _int_env("MAX_VIDEO_BYTES", 262_144_000)),
+        upload_temp_dir=_str_env("UPLOAD_TEMP_DIR"),
+        # Purges expired events; off by default so data is never deleted implicitly.
+        retention_worker_enabled=_bool_env("RETENTION_WORKER_ENABLED", False),
+        retention_interval_seconds=_int_env("RETENTION_INTERVAL_SECONDS", 3600),
         external_fetch_connect_timeout_seconds=_float_env("EXTERNAL_FETCH_CONNECT_TIMEOUT_SECONDS", 5.0),
         external_fetch_read_timeout_seconds=_float_env("EXTERNAL_FETCH_READ_TIMEOUT_SECONDS", 10.0),
         external_fetch_max_response_bytes=_int_env("EXTERNAL_FETCH_MAX_RESPONSE_BYTES", 65_536),
