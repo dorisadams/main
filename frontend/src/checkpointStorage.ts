@@ -14,7 +14,7 @@ export type SilentWitnessProofData = {
 }
 
 export type EvidenceStateData = {
-  stage: 'idle' | 'hashing' | 'embedding' | 'proving' | 'ready' | 'registered' | 'error'
+  stage: 'idle' | 'hashing' | 'embedding' | 'proving' | 'ready' | 'registering' | 'registered' | 'error'
   tier: IdentityTier
   fileName?: string
   sourceHash?: string

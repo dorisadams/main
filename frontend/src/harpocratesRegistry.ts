@@ -7,6 +7,7 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk'
 import { rpc } from '@stellar/stellar-sdk'
+import type { xdr } from '@stellar/stellar-sdk'
 import { signTransaction } from '@stellar/freighter-api'
 import {
   asHex32,
@@ -16,9 +17,9 @@ import {
   scBytes32,
   scU32,
 } from './stellarEncoding'
+import { assertReleaseCompatibility } from './releaseCompatibility'
 import type {
   ChainProofRecord,
-  ChainVerifierState,
   IdentityTier,
   NormalizedRegisterProofInput,
   ProofHistoryEntry,
@@ -216,7 +217,7 @@ export async function getBatchProofStatuses(
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
-    .addOperation(contract.call('get_proof_statuses' as any, scProofIds))
+    .addOperation(contract.call('get_proof_statuses' as RegistryMethod, scProofIds as unknown as xdr.ScVal))
     .setTimeout(30)
     .build()
 

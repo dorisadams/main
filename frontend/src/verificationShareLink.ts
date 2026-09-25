@@ -117,7 +117,7 @@ export function createVerificationSharePayload(
     payload.transactionRef = tx
   }
 
-  if (input.tier !== undefined && input.tier !== null && input.tier !== '') {
+  if (input.tier !== undefined && input.tier !== null && (input.tier as string) !== '') {
     if (!isTier(input.tier)) return fail('INVALID_FIELD')
     payload.tier = input.tier
   }

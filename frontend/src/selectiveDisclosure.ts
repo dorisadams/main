@@ -1,4 +1,4 @@
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend, Fr } from '@aztec/bb.js'
 import { Noir } from '@noir-lang/noir_js'
 import type { CompiledCircuit } from '@noir-lang/types'
 import type {
@@ -19,8 +19,10 @@ async function getBB(): Promise<Barretenberg> {
 
 async function pedersenHash(inputs: bigint[]): Promise<bigint> {
   const bb = await getBB()
-  const result = await bb.pedersenHash(inputs)
-  return result
+  // bb.js 0.87 hashes Fr-typed inputs with an explicit domain index and
+  // returns a Fr; unwrap it back to the bigint domain the callers use.
+  const result = await bb.pedersenHash(inputs.map((v) => new Fr(v)), 0)
+  return BigInt(result.toString())
 }
 
 function padPredicates(predicates: Predicate[]): Predicate[] {
