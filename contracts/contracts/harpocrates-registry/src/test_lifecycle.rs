@@ -34,7 +34,7 @@ struct MockVerifierLifecycle;
 #[contractimpl]
 impl MockVerifierLifecycle {
     pub fn verify_proof(_env: Env, public_inputs: Bytes, proof: Bytes) {
-        if public_inputs.len() != 128 || proof.is_empty() {
+        if public_inputs.len() != 160 || proof.is_empty() {
             panic!("invalid proof");
         }
     }
@@ -62,11 +62,15 @@ fn make_pi(env: &Env, vh: &BytesN<32>, cr: &BytesN<32>, nu: &BytesN<32>) -> Byte
     cr.copy_into_slice(&mut c);
     let mut n = [0u8; 32];
     nu.copy_into_slice(&mut n);
-    let mut buf = [0u8; 128];
+    let tag = expected_domain_tag(env);
+    let mut t = [0u8; 32];
+    tag.copy_into_slice(&mut t);
+    let mut buf = [0u8; 160];
     buf[16..32].copy_from_slice(&v[..16]);
     buf[48..64].copy_from_slice(&v[16..]);
     buf[64..96].copy_from_slice(&c);
     buf[96..128].copy_from_slice(&n);
+    buf[128..160].copy_from_slice(&t);
     Bytes::from_array(env, &buf)
 }
 
@@ -198,6 +202,10 @@ fn lifecycle_source_emits_history() {
     client.init(&admin);
     client.register_source(&source, &b32(&env, 0x22), &b32(&env, 0x23), &proof_id);
 
+    // Snapshot immediately: env.events().all() reflects only the most recent
+    // invocation, so later client calls would clear these events.
+    let events = env.events().all();
+
     assert_eq!(client.get_proof_history_count(&proof_id), 1);
     let history = collect_history(&env, &client, &proof_id);
     assert_eq!(history.len(), 1);
@@ -211,24 +219,40 @@ fn lifecycle_source_emits_history() {
     // Registration has one stable observable order: ProofRegistered first,
     // then its append-only lifecycle history entry. This also guards the
     // batch path, which uses the same save_record helper.
-    let events = env.events().all();
     assert_eq!(events.events().len(), 2);
-    let registration_topics: SorobanVec<Val> = events.events().get(0).unwrap().1.clone();
-    let history_topics: SorobanVec<Val> = events.events().get(1).unwrap().1.clone();
+    use soroban_sdk::xdr::ContractEventBody;
+    use soroban_sdk::{TryFromVal as _, TryIntoVal as _};
+
+    fn topics_of(env: &Env, event: &soroban_sdk::xdr::ContractEvent) -> soroban_sdk::Vec<Val> {
+        match &event.body {
+            ContractEventBody::V0(v0) => {
+                let mut topics = soroban_sdk::Vec::new(env);
+                for t in v0.topics.iter() {
+                    topics.push_back(Val::try_from_val(env, t).unwrap());
+                }
+                topics
+            }
+            _ => soroban_sdk::Vec::new(env),
+        }
+    }
+
+    let registration_topics = topics_of(&env, events.events().get(0).unwrap());
+    let history_topics = topics_of(&env, events.events().get(1).unwrap());
+    let as_symbol = |v: Val| -> Symbol { Symbol::try_from_val(&env, &v).unwrap() };
     assert_eq!(
-        registration_topics.get(0).unwrap().try_into_val::<Symbol>(&env).unwrap(),
+        as_symbol(registration_topics.get(0).unwrap()),
         Symbol::new(&env, "proof")
     );
     assert_eq!(
-        registration_topics.get(1).unwrap().try_into_val::<Symbol>(&env).unwrap(),
+        as_symbol(registration_topics.get(1).unwrap()),
         Symbol::new(&env, "reg")
     );
     assert_eq!(
-        history_topics.get(0).unwrap().try_into_val::<Symbol>(&env).unwrap(),
+        as_symbol(history_topics.get(0).unwrap()),
         Symbol::new(&env, "proof")
     );
     assert_eq!(
-        history_topics.get(1).unwrap().try_into_val::<Symbol>(&env).unwrap(),
+        as_symbol(history_topics.get(1).unwrap()),
         Symbol::new(&env, "history")
     );
 }

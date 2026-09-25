@@ -149,22 +149,46 @@ impl Model {
 
 fn assert_tier_shape(record: &ProofRecord, expected_tier: u32, label: &str) {
     assert_eq!(record.tier, expected_tier, "{label}: unexpected tier");
-    assert_eq!(record.status, STATUS_REGISTERED, "{label}: unexpected status");
+    assert_eq!(
+        record.status, STATUS_REGISTERED,
+        "{label}: unexpected status"
+    );
     match expected_tier {
         TIER_SILENT_WITNESS => {
-            assert!(record.source.is_none(), "{label}: tier1 must not expose source");
-            assert!(record.issuer.is_none(), "{label}: tier1 must not expose issuer");
-            assert!(record.nullifier.is_some(), "{label}: tier1 requires nullifier");
+            assert!(
+                record.source.is_none(),
+                "{label}: tier1 must not expose source"
+            );
+            assert!(
+                record.issuer.is_none(),
+                "{label}: tier1 must not expose issuer"
+            );
+            assert!(
+                record.nullifier.is_some(),
+                "{label}: tier1 requires nullifier"
+            );
         }
         TIER_CONSISTENT_SOURCE => {
             assert!(record.source.is_some(), "{label}: tier2 requires source");
-            assert!(record.issuer.is_none(), "{label}: tier2 must not expose issuer");
-            assert!(record.nullifier.is_none(), "{label}: tier2 must not store nullifier");
+            assert!(
+                record.issuer.is_none(),
+                "{label}: tier2 must not expose issuer"
+            );
+            assert!(
+                record.nullifier.is_none(),
+                "{label}: tier2 must not store nullifier"
+            );
         }
         TIER_PUBLIC_SEAL => {
-            assert!(record.source.is_none(), "{label}: tier3 must not expose source");
+            assert!(
+                record.source.is_none(),
+                "{label}: tier3 must not expose source"
+            );
             assert!(record.issuer.is_some(), "{label}: tier3 requires issuer");
-            assert!(record.nullifier.is_none(), "{label}: tier3 must not store nullifier");
+            assert!(
+                record.nullifier.is_none(),
+                "{label}: tier3 must not store nullifier"
+            );
         }
         other => panic!("unexpected tier tag {other} in {label}"),
     }
@@ -192,7 +216,7 @@ fn try_register_source(
     );
     match result {
         Ok(Ok(rec)) => Ok(rec),
-        Ok(Err(e)) => Err(e as u32),
+        Ok(Err(_)) => Err(0xfffe),
         Err(Ok(e)) => Err(e as u32),
         Err(Err(_)) => Err(0xffff),
     }
@@ -220,7 +244,7 @@ fn try_register_seal(
     );
     match result {
         Ok(Ok(rec)) => Ok(rec),
-        Ok(Err(e)) => Err(e as u32),
+        Ok(Err(_)) => Err(0xfffe),
         Err(Ok(e)) => Err(e as u32),
         Err(Err(_)) => Err(0xffff),
     }
@@ -251,7 +275,7 @@ fn try_register_anonymous(
     );
     match result {
         Ok(Ok(rec)) => Ok(rec),
-        Ok(Err(e)) => Err(e as u32),
+        Ok(Err(_)) => Err(0xfffe),
         Err(Ok(e)) => Err(e as u32),
         Err(Err(_)) => Err(0xffff),
     }
@@ -286,7 +310,10 @@ fn check_lookups(client: &HarpocratesRegistryClient<'_>, model: &Model, env: &En
             .get_by_video(&video)
             .unwrap_or_else(|| panic!("{label}: missing video slot={}", p.video));
         assert_eq!(by_video.tier, by_id.tier, "{label}: lookup tier diverge");
-        assert_eq!(by_video.video_hash, by_id.video_hash, "{label}: lookup video diverge");
+        assert_eq!(
+            by_video.video_hash, by_id.video_hash,
+            "{label}: lookup video diverge"
+        );
         if let Some(n) = p.nullifier {
             assert!(
                 client.has_nullifier(&b32(env, slot_byte(0xD4, n))),
@@ -322,11 +349,21 @@ fn run_seed(seed: u32) {
 
                 let before_count = model.proofs.len();
                 let result = try_register_anonymous(
-                    &env, &contract_id, &video, &metadata, &proof_id, &nullifier, &cred,
+                    &env,
+                    &contract_id,
+                    &video,
+                    &metadata,
+                    &proof_id,
+                    &nullifier,
+                    &cred,
                 );
                 if expect_fail {
                     assert!(result.is_err(), "{label}: anonymous should reject");
-                    assert_eq!(model.proofs.len(), before_count, "{label}: storage changed on reject");
+                    assert_eq!(
+                        model.proofs.len(),
+                        before_count,
+                        "{label}: storage changed on reject"
+                    );
                 } else {
                     let rec = result.unwrap_or_else(|e| panic!("{label}: anonymous err={e}"));
                     assert_tier_shape(&rec, TIER_SILENT_WITNESS, &label);
@@ -350,12 +387,15 @@ fn run_seed(seed: u32) {
                     || model.has_video(video_slot);
 
                 let before_count = model.proofs.len();
-                let result = try_register_source(
-                    &env, &contract_id, &source, &video, &metadata, &proof_id,
-                );
+                let result =
+                    try_register_source(&env, &contract_id, &source, &video, &metadata, &proof_id);
                 if expect_fail {
                     assert!(result.is_err(), "{label}: source should reject");
-                    assert_eq!(model.proofs.len(), before_count, "{label}: storage changed on reject");
+                    assert_eq!(
+                        model.proofs.len(),
+                        before_count,
+                        "{label}: storage changed on reject"
+                    );
                 } else {
                     let rec = result.unwrap_or_else(|e| panic!("{label}: source err={e}"));
                     assert_tier_shape(&rec, TIER_CONSISTENT_SOURCE, &label);
@@ -379,12 +419,15 @@ fn run_seed(seed: u32) {
                     || model.has_video(video_slot);
 
                 let before_count = model.proofs.len();
-                let result = try_register_seal(
-                    &env, &contract_id, &issuer, &video, &metadata, &proof_id,
-                );
+                let result =
+                    try_register_seal(&env, &contract_id, &issuer, &video, &metadata, &proof_id);
                 if expect_fail {
                     assert!(result.is_err(), "{label}: seal should reject");
-                    assert_eq!(model.proofs.len(), before_count, "{label}: storage changed on reject");
+                    assert_eq!(
+                        model.proofs.len(),
+                        before_count,
+                        "{label}: storage changed on reject"
+                    );
                 } else {
                     let rec = result.unwrap_or_else(|e| panic!("{label}: seal err={e}"));
                     assert_tier_shape(&rec, TIER_PUBLIC_SEAL, &label);
@@ -420,7 +463,10 @@ fn run_seed(seed: u32) {
                 } else {
                     try_register_source(&env, &contract_id, &source, &video, &metadata, &proof_id)
                 };
-                assert!(result.is_err(), "{label}: duplicate proof_id must fail cross-tier");
+                assert!(
+                    result.is_err(),
+                    "{label}: duplicate proof_id must fail cross-tier"
+                );
                 let err = result.err().unwrap();
                 assert!(
                     err == RegistryError::DuplicateProof as u32
@@ -451,7 +497,10 @@ fn run_seed(seed: u32) {
                 } else {
                     try_register_seal(&env, &contract_id, &issuer, &video, &metadata, &proof_id)
                 };
-                assert!(result.is_err(), "{label}: duplicate video_hash must fail cross-tier");
+                assert!(
+                    result.is_err(),
+                    "{label}: duplicate video_hash must fail cross-tier"
+                );
                 let err = result.err().unwrap();
                 assert!(
                     err == RegistryError::DuplicateVideo as u32
@@ -527,8 +576,14 @@ fn run_seed(seed: u32) {
     let mut seen_video = std::vec::Vec::new();
     let mut seen_null = std::vec::Vec::new();
     for p in &model.proofs {
-        assert!(!seen_proof.contains(&p.proof_id), "seed={seed}: proof_id not unique");
-        assert!(!seen_video.contains(&p.video), "seed={seed}: video not unique");
+        assert!(
+            !seen_proof.contains(&p.proof_id),
+            "seed={seed}: proof_id not unique"
+        );
+        assert!(
+            !seen_video.contains(&p.video),
+            "seed={seed}: video not unique"
+        );
         seen_proof.push(p.proof_id);
         seen_video.push(p.video);
         if let Some(n) = p.nullifier {

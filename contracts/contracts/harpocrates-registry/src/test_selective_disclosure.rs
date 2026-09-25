@@ -1,11 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Bytes, BytesN, Env,
-};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, BytesN, Env};
 
 #[contract]
 struct MockNoirVerifier;
@@ -99,7 +95,14 @@ fn test_verify_selective_disclosure_valid() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
 
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
@@ -121,7 +124,14 @@ fn test_verify_selective_disclosure_unknown_schema() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -142,7 +152,14 @@ fn test_verify_selective_disclosure_inactive_schema() {
     client.deprecate_schema(&admin, &schema_hash);
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -163,7 +180,14 @@ fn test_verify_selective_disclosure_wrong_namespace() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &wrong_ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &wrong_ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -183,7 +207,14 @@ fn test_verify_selective_disclosure_schema_version_mismatch() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -203,7 +234,14 @@ fn test_circuit_version_downgrade() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 0,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        0,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -222,7 +260,14 @@ fn test_verify_selective_disclosure_unknown_credential_root() {
     let evidence_digest = bytes32(&env, 0xCC);
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));
 }
@@ -242,7 +287,14 @@ fn test_verify_selective_disclosure_duplicate_nullifier() {
     client.add_credential_root(&admin, &credential_root, &bytes32(&env, 0xDD));
 
     let inputs = make_selective_disclosure_inputs(
-        &env, &schema_hash, &ns, 1, &credential_root, &nullifier, &evidence_digest, 1,
+        &env,
+        &schema_hash,
+        &ns,
+        1,
+        &credential_root,
+        &nullifier,
+        &evidence_digest,
+        1,
     );
 
     client.verify_selective_disclosure(&inputs, &valid_proof(&env));

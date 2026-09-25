@@ -439,14 +439,22 @@ fn a_delegate_registers_a_source_proof_attributed_to_the_grantor() {
 
     let video_hash = b32(&env, 1);
     let proof_id = b32(&env, 3);
-    let record =
-        client.register_source_delegated(&delegate, &grantor, &video_hash, &b32(&env, 2), &proof_id);
+    let record = client.register_source_delegated(
+        &delegate,
+        &grantor,
+        &video_hash,
+        &b32(&env, 2),
+        &proof_id,
+    );
 
     // Authority is attributed to the grantor…
     assert_eq!(record.tier, TIER_CONSISTENT_SOURCE);
     assert_eq!(record.source, Some(grantor.clone()));
     assert_eq!(client.get_proof(&proof_id).unwrap().source, Some(grantor));
-    assert_eq!(client.get_by_video(&video_hash).unwrap().video_hash, video_hash);
+    assert_eq!(
+        client.get_by_video(&video_hash).unwrap().video_hash,
+        video_hash
+    );
 
     // …while the history names the actor, so the two are never conflated.
     let entry = client.get_proof_history_at(&proof_id, &1).unwrap();
@@ -553,16 +561,16 @@ fn a_delegate_registers_a_seal_for_an_active_issuer() {
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
 
     client.add_issuer(&admin, &issuer, &b32(&env, 7));
-    client.grant_delegation(&issuer, &delegate, &DELEGATION_SCOPE_REGISTER_SEAL, &ONE_DAY);
+    client.grant_delegation(
+        &issuer,
+        &delegate,
+        &DELEGATION_SCOPE_REGISTER_SEAL,
+        &ONE_DAY,
+    );
 
     let proof_id = b32(&env, 3);
-    let record = client.register_seal_delegated(
-        &delegate,
-        &issuer,
-        &b32(&env, 1),
-        &b32(&env, 2),
-        &proof_id,
-    );
+    let record =
+        client.register_seal_delegated(&delegate, &issuer, &b32(&env, 1), &b32(&env, 2), &proof_id);
 
     assert_eq!(record.tier, TIER_PUBLIC_SEAL);
     assert_eq!(record.issuer, Some(issuer));
@@ -579,7 +587,12 @@ fn a_delegation_does_not_substitute_for_issuer_standing() {
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
 
     // The grantor delegates a seal scope but was never registered as an issuer.
-    client.grant_delegation(&issuer, &delegate, &DELEGATION_SCOPE_REGISTER_SEAL, &ONE_DAY);
+    client.grant_delegation(
+        &issuer,
+        &delegate,
+        &DELEGATION_SCOPE_REGISTER_SEAL,
+        &ONE_DAY,
+    );
 
     client.register_seal_delegated(
         &delegate,
@@ -597,7 +610,12 @@ fn revoking_the_issuer_stops_its_delegates_too() {
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
 
     client.add_issuer(&admin, &issuer, &b32(&env, 7));
-    client.grant_delegation(&issuer, &delegate, &DELEGATION_SCOPE_REGISTER_SEAL, &ONE_DAY);
+    client.grant_delegation(
+        &issuer,
+        &delegate,
+        &DELEGATION_SCOPE_REGISTER_SEAL,
+        &ONE_DAY,
+    );
     client.revoke_issuer(&admin, &issuer);
 
     client.register_seal_delegated(
@@ -729,13 +747,7 @@ fn a_delegate_cannot_revoke_a_proof() {
 
     client.grant_delegation(&grantor, &delegate, &DELEGATION_SCOPE_ALL, &ONE_DAY);
     let proof_id = b32(&env, 3);
-    client.register_source_delegated(
-        &delegate,
-        &grantor,
-        &b32(&env, 1),
-        &b32(&env, 2),
-        &proof_id,
-    );
+    client.register_source_delegated(&delegate, &grantor, &b32(&env, 1), &b32(&env, 2), &proof_id);
 
     client.revoke_proof(&delegate, &proof_id);
 }

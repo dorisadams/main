@@ -44,7 +44,9 @@ struct MockStateMachineVerifier;
 impl MockStateMachineVerifier {
     pub fn verify_proof(_env: Env, public_inputs: Bytes, proof: Bytes) {
         let len = public_inputs.len();
-        if (len != 128 && len != 192) || proof.is_empty() {
+        // Accept all canonical frame shapes: 128-byte revocation witness,
+        // 160-byte silent witness, and 224-byte scoped silent witness.
+        if (len != 128 && len != 160 && len != 224) || proof.is_empty() {
             panic!("invalid state-machine proof");
         }
     }
@@ -547,8 +549,8 @@ fn silent_public_inputs(
     mode: SilentInputMode,
 ) -> Bytes {
     match mode {
-        SilentInputMode::Short => Bytes::from_array(env, &[0x11; 127]),
-        SilentInputMode::Oversized => Bytes::from_array(env, &[0x22; 129]),
+        SilentInputMode::Short => Bytes::from_array(env, &[0x11; 159]),
+        SilentInputMode::Oversized => Bytes::from_array(env, &[0x22; 161]),
         SilentInputMode::Correct | SilentInputMode::WrongVideo => {
             let input_video = match mode {
                 SilentInputMode::WrongVideo => slot(video).wrapping_add(1) % KEY_POOL,
@@ -564,11 +566,16 @@ fn silent_public_inputs(
             credential_root.copy_into_slice(&mut cr);
             nullifier.copy_into_slice(&mut nu);
 
-            let mut bytes = [0u8; 128];
+            let mut bytes = [0u8; 160];
             bytes[16..32].copy_from_slice(&vh[..16]);
             bytes[48..64].copy_from_slice(&vh[16..]);
             bytes[64..96].copy_from_slice(&cr);
             bytes[96..128].copy_from_slice(&nu);
+            // Fifth field word: the canonical silent-witness domain tag.
+            let tag = expected_domain_tag(env);
+            let mut t = [0u8; 32];
+            tag.copy_into_slice(&mut t);
+            bytes[128..160].copy_from_slice(&t);
             Bytes::from_array(env, &bytes)
         }
     }

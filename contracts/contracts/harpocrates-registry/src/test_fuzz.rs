@@ -59,10 +59,7 @@ impl Lcg {
     }
 
     fn next_u32(&mut self) -> u32 {
-        self.state = self
-            .state
-            .wrapping_mul(1664525)
-            .wrapping_add(1013904223);
+        self.state = self.state.wrapping_mul(1664525).wrapping_add(1013904223);
         self.state
     }
 
@@ -80,8 +77,11 @@ impl Lcg {
 #[cfg(test)]
 fn mutate(base: &[u8], mutator: u32, rng: &mut Lcg) -> Vec<u8> {
     let mut data: Vec<u8> = base.to_vec();
-    let field_count = (PUBLIC_INPUTS_LEN / verifier_inputs::FIELD_LEN) as u32;
     let field_len = verifier_inputs::FIELD_LEN;
+    // Field-level mutators must respect the actual frame length: the
+    // revocation schema carries 4 field words (128 bytes) while the silent
+    // witness carries 5 (160 bytes).
+    let field_count = (data.len() / field_len) as u32;
 
     match mutator {
         // 0: truncate_tail
@@ -119,11 +119,7 @@ fn mutate(base: &[u8], mutator: u32, rng: &mut Lcg) -> Vec<u8> {
         // 4: field_zero
         4 => {
             let index = rng.below(field_count) as usize;
-            for byte in data
-                .iter_mut()
-                .skip(index * field_len)
-                .take(field_len)
-            {
+            for byte in data.iter_mut().skip(index * field_len).take(field_len) {
                 *byte = 0x00;
             }
             data
@@ -131,11 +127,7 @@ fn mutate(base: &[u8], mutator: u32, rng: &mut Lcg) -> Vec<u8> {
         // 5: field_saturate
         5 => {
             let index = rng.below(field_count) as usize;
-            for byte in data
-                .iter_mut()
-                .skip(index * field_len)
-                .take(field_len)
-            {
+            for byte in data.iter_mut().skip(index * field_len).take(field_len) {
                 *byte = 0xff;
             }
             data
@@ -199,6 +191,8 @@ fn positive_frame(schema: &str) -> Vec<u8> {
         frame.extend_from_slice(&lo);
         frame.extend_from_slice(&credential_root);
         frame.extend_from_slice(&nullifier);
+        // Fifth field word: the canonical silent-witness domain tag.
+        frame.extend_from_slice(&verifier_inputs::SILENT_WITNESS_DOMAIN_TAG_BE);
     } else {
         frame.extend_from_slice(&revocation_root);
         frame.extend_from_slice(&nullifier);
@@ -287,11 +281,15 @@ fn proof_length_sweep_is_bounded_and_declared() {
                 Ok(()) => verifier_inputs::ACCEPTED_CODE,
                 Err(code) => code.as_code(),
             };
-            assert!(declared(verdict), "proof_len={} gave {}", proof_len, verdict);
+            assert!(
+                declared(verdict),
+                "proof_len={} gave {}",
+                proof_len,
+                verdict
+            );
         }
     }
 }
-
 
 #[test]
 fn proof_length_edges_are_exact() {
@@ -302,13 +300,22 @@ fn proof_length_edges_are_exact() {
             verifier_inputs::MIN_PROOF_BYTES - 1,
             verifier_inputs::RejectCode::ProofUndersize.as_code(),
         ),
-        (verifier_inputs::MIN_PROOF_BYTES, verifier_inputs::ACCEPTED_CODE),
-        (verifier_inputs::MAX_PROOF_BYTES, verifier_inputs::ACCEPTED_CODE),
+        (
+            verifier_inputs::MIN_PROOF_BYTES,
+            verifier_inputs::ACCEPTED_CODE,
+        ),
+        (
+            verifier_inputs::MAX_PROOF_BYTES,
+            verifier_inputs::ACCEPTED_CODE,
+        ),
         (
             verifier_inputs::MAX_PROOF_BYTES + 1,
             verifier_inputs::RejectCode::ProofOversize.as_code(),
         ),
-        (u32::MAX, verifier_inputs::RejectCode::ProofOversize.as_code()),
+        (
+            u32::MAX,
+            verifier_inputs::RejectCode::ProofOversize.as_code(),
+        ),
     ];
 
     for &(proof_len, expected) in cases {
@@ -316,7 +323,7 @@ fn proof_length_edges_are_exact() {
             verifier_inputs::SCHEMA_SILENT_WITNESS,
             &base,
             proof_len,
-            &REVOCATION_DOMAIN_SEPARATOR,
+            &verifier_inputs::SILENT_WITNESS_DOMAIN_TAG_BE,
         ) {
             Ok(()) => verifier_inputs::ACCEPTED_CODE,
             Err(code) => code.as_code(),
@@ -351,7 +358,7 @@ fn proof_length_boundary_neighbourhood_is_declared() {
             verifier_inputs::SCHEMA_SILENT_WITNESS,
             &base,
             proof_len,
-            &REVOCATION_DOMAIN_SEPARATOR,
+            &verifier_inputs::SILENT_WITNESS_DOMAIN_TAG_BE,
         ) {
             Ok(()) => verifier_inputs::ACCEPTED_CODE,
             Err(code) => code.as_code(),
@@ -428,12 +435,13 @@ fn on_chain_and_pure_codec_agree_on_every_mutant() {
             let mutator = rng.below(MUTATOR_COUNT);
             let mutant = mutate(&base, mutator, &mut rng);
 
-            let pure = match verifier_inputs::classify(
-                schema,
-                &mutant,
-                64,
-                &REVOCATION_DOMAIN_SEPARATOR,
-            ) {
+            let expected_domain: &[u8; verifier_inputs::FIELD_LEN] =
+                if *schema == verifier_inputs::SCHEMA_SILENT_WITNESS {
+                    &verifier_inputs::SILENT_WITNESS_DOMAIN_TAG_BE
+                } else {
+                    &REVOCATION_DOMAIN_SEPARATOR
+                };
+            let pure = match verifier_inputs::classify(schema, &mutant, 64, expected_domain) {
                 Ok(()) => verifier_inputs::ACCEPTED_CODE,
                 Err(code) => code.as_code(),
             };
@@ -487,7 +495,9 @@ fn a_seed_replays_the_same_mutants_and_verdicts() {
 fn distinct_seeds_explore_distinct_paths() {
     let trace = |seed: u32| {
         let mut rng = Lcg::new(seed);
-        (0..64).map(|_| rng.below(MUTATOR_COUNT)).collect::<Vec<_>>()
+        (0..64)
+            .map(|_| rng.below(MUTATOR_COUNT))
+            .collect::<Vec<_>>()
     };
     assert_ne!(trace(SEEDS[0]), trace(SEEDS[1]));
 }

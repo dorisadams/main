@@ -280,7 +280,8 @@ fn classification_is_idempotent_and_side_effect_free() {
     let proof_len = (case.proof_hex.len() / 2) as u32;
 
     let first = client.classify_public_inputs(&schema_id(&case.schema), &public_inputs, &proof_len);
-    let second = client.classify_public_inputs(&schema_id(&case.schema), &public_inputs, &proof_len);
+    let second =
+        client.classify_public_inputs(&schema_id(&case.schema), &public_inputs, &proof_len);
 
     assert_eq!(first, verifier_inputs::ACCEPTED_CODE);
     assert_eq!(first, second, "classification must be deterministic");

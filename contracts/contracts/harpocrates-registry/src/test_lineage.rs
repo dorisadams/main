@@ -11,6 +11,10 @@ impl MockLineageVerifier {
     pub fn verify_proof(_env: Env, _public_inputs: Bytes, _proof: Bytes) {}
 }
 
+fn bytes32(env: &Env, value: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[value; 32])
+}
+
 #[test]
 fn registers_lineage_with_bounded_validation() {
     let env = Env::default();
@@ -31,7 +35,7 @@ fn registers_lineage_with_bounded_validation() {
         &bytes32(&env, 4),
         &Symbol::new(&env, "crop"),
         &bytes32(&env, 5),
-        1,
+        &1u32,
     );
 
     assert_eq!(lineage.output_digest, bytes32(&env, 5));
@@ -39,7 +43,7 @@ fn registers_lineage_with_bounded_validation() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #17)")]
+#[should_panic(expected = "Error(Contract, #60)")]
 fn rejects_excessive_fanout() {
     let env = Env::default();
     env.mock_all_auths();
@@ -67,12 +71,12 @@ fn rejects_excessive_fanout() {
         &bytes32(&env, 6),
         &Symbol::new(&env, "compose"),
         &bytes32(&env, 7),
-        1,
+        &1u32,
     );
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #15)")]
+#[should_panic(expected = "Error(Contract, #58)")]
 fn rejects_self_referential_lineage() {
     let env = Env::default();
     env.mock_all_auths();
@@ -89,6 +93,6 @@ fn rejects_self_referential_lineage() {
         &bytes32(&env, 2),
         &Symbol::new(&env, "crop"),
         &bytes32(&env, 1),
-        1,
+        &1u32,
     );
 }

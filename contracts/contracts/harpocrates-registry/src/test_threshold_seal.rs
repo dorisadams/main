@@ -17,8 +17,8 @@
 use super::*;
 #[cfg(test)]
 use soroban_sdk::{
-    testutils::{Address as _, Events as _},
-    Address, Bytes, Env,
+    testutils::{Address as _, Events as _, Ledger},
+    Address, Bytes, Env, IntoVal, Symbol,
 };
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ fn policy_create_increments_version() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #20)")]
+#[should_panic(expected = "Error(Contract, #73)")] // InvalidThreshold
 fn policy_create_invalid_threshold_zero() {
     let (env, contract_id, admin) = setup_admin();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -111,7 +111,7 @@ fn policy_create_invalid_threshold_zero() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #20)")]
+#[should_panic(expected = "Error(Contract, #73)")] // InvalidThreshold
 fn policy_create_invalid_threshold_exceeds_max() {
     let (env, contract_id, admin) = setup_admin();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -119,7 +119,7 @@ fn policy_create_invalid_threshold_exceeds_max() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #74)")]
 fn policy_create_signer_set_too_large() {
     let (env, contract_id, admin) = setup_admin();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -206,7 +206,7 @@ fn signer_add_idempotent() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #15)")]
+#[should_panic(expected = "Error(Contract, #69)")]
 fn signer_add_to_cancelled_policy() {
     let (env, contract_id, admin, issuer1, _) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -217,7 +217,7 @@ fn signer_add_to_cancelled_policy() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #74)")]
 fn signer_add_exceeds_max_signers() {
     let (env, contract_id, admin) = setup_admin();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -329,7 +329,7 @@ fn approval_idempotent() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #70)")] // UnknownPolicySigner (signer-set boundary is checked first)
 fn approval_unknown_signer() {
     let (env, contract_id, admin, issuer1, issuer2) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -338,7 +338,12 @@ fn approval_unknown_signer() {
     client.add_seal_policy_signer(&admin, &1, &issuer1);
 
     let outsider = Address::generate(&env);
-    client.approve_seal(&outsider, &b32(&env, 0x20), &b32(&env, 0x21), &b32(&env, 0x22));
+    client.approve_seal(
+        &outsider,
+        &b32(&env, 0x20),
+        &b32(&env, 0x21),
+        &b32(&env, 0x22),
+    );
 }
 
 #[test]
@@ -351,7 +356,12 @@ fn approval_revoked_issuer() {
     client.add_seal_policy_signer(&admin, &1, &issuer1);
     client.revoke_issuer(&admin, &issuer1);
 
-    client.approve_seal(&issuer1, &b32(&env, 0x30), &b32(&env, 0x31), &b32(&env, 0x32));
+    client.approve_seal(
+        &issuer1,
+        &b32(&env, 0x30),
+        &b32(&env, 0x31),
+        &b32(&env, 0x32),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -416,16 +426,42 @@ fn finalize_seal_explicit() {
     let video_hash = b32(&env, 0x51);
     let metadata_hash = b32(&env, 0x52);
 
+    // Below threshold, explicit finalize is rejected.
     client.approve_seal(&issuer1, &proof_id, &video_hash, &metadata_hash);
-    client.approve_seal(&issuer2, &proof_id, &video_hash, &metadata_hash);
+    assert!(client.get_proof(&proof_id).is_none());
+    let below = env.try_invoke_contract::<ProofRecord, RegistryError>(
+        &contract_id,
+        &Symbol::new(&env, "finalize_seal"),
+        (proof_id.clone(), video_hash.clone(), metadata_hash.clone()).into_val(&env),
+    );
+    match below {
+        Err(Ok(e)) => assert_eq!(e, RegistryError::ThresholdNotMet),
+        other => panic!("expected ThresholdNotMet, got ok={}", other.is_ok()),
+    }
 
-    // Explicit finalize should work (already finalized by approve_seal)
-    let record = client.finalize_seal(&proof_id, &video_hash, &metadata_hash);
+    // Reaching the threshold auto-finalizes atomically.
+    assert!(client.approve_seal(&issuer2, &proof_id, &video_hash, &metadata_hash));
+    let record = client.get_proof(&proof_id).unwrap();
     assert_eq!(record.tier, TIER_PUBLIC_SEAL);
+    assert_eq!(record.status, STATUS_REGISTERED);
+
+    // Finalizing again is rejected: threshold seals are single-finalization.
+    let result = env.try_invoke_contract::<ProofRecord, RegistryError>(
+        &contract_id,
+        &Symbol::new(&env, "finalize_seal"),
+        (proof_id.clone(), video_hash.clone(), metadata_hash.clone()).into_val(&env),
+    );
+    match result {
+        Err(Ok(e)) => assert_eq!(e, RegistryError::AlreadyFinalized),
+        other => panic!(
+            "expected AlreadyFinalized contract error, got ok={}",
+            other.is_ok()
+        ),
+    }
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #19)")]
+#[should_panic(expected = "Error(Contract, #72)")]
 fn finalize_seal_threshold_not_met() {
     let (env, contract_id, admin, issuer1, issuer2) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -446,7 +482,7 @@ fn finalize_seal_threshold_not_met() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #23)")]
+#[should_panic(expected = "Error(Contract, #76)")]
 fn finalize_seal_already_finalized() {
     let (env, contract_id, admin, issuer1, _) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -454,9 +490,9 @@ fn finalize_seal_already_finalized() {
     client.create_seal_policy(&admin, &1, &2, &86400u64, &0u64);
     client.add_seal_policy_signer(&admin, &1, &issuer1);
 
-    let proof_id = b32(&env, &0x70);
-    let video_hash = b32(&env, &0x71);
-    let metadata_hash = b32(&env, &0x72);
+    let proof_id = b32(&env, 0x70);
+    let video_hash = b32(&env, 0x71);
+    let metadata_hash = b32(&env, 0x72);
 
     client.approve_seal(&issuer1, &proof_id, &video_hash, &metadata_hash);
 
@@ -535,7 +571,7 @@ fn revoked_issuer_after_finalization_preserves_seal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "Error(Contract, #23)")]
+#[should_panic(expected = "Error(Contract, #76)")]
 fn approval_on_already_registered_proof() {
     let (env, contract_id, admin, issuer1, _) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
@@ -551,9 +587,12 @@ fn approval_on_already_registered_proof() {
     // First approval finalizes
     client.approve_seal(&issuer1, &proof_id, &video_hash, &metadata_hash);
 
-    // Second approval on same proof should fail (AlreadyFinalized)
+    // Second approval on same proof should fail (AlreadyFinalized).
+    // issuer2 must first join the signer set so the request passes the
+    // authorization gates and reaches the finalization check.
     let issuer2 = Address::generate(&env);
     client.add_issuer(&admin, &issuer2, &b32(&env, 0xA3));
+    client.add_seal_policy_signer(&admin, &1, &issuer2);
     client.approve_seal(&issuer2, &proof_id, &video_hash, &metadata_hash);
 }
 
@@ -640,7 +679,12 @@ fn approval_event_emitted() {
 
     let _ = env.events().all();
 
-    client.approve_seal(&issuer1, &b32(&env, 0xD0), &b32(&env, 0xD1), &b32(&env, 0xD2));
+    client.approve_seal(
+        &issuer1,
+        &b32(&env, 0xD0),
+        &b32(&env, 0xD1),
+        &b32(&env, 0xD2),
+    );
     assert_ne!(
         env.events().all(),
         [].as_slice(),
@@ -658,7 +702,12 @@ fn finalize_event_emitted() {
 
     let _ = env.events().all();
 
-    client.approve_seal(&issuer1, &b32(&env, 0xE0), &b32(&env, 0xE1), &b32(&env, 0xE2));
+    client.approve_seal(
+        &issuer1,
+        &b32(&env, 0xE0),
+        &b32(&env, 0xE1),
+        &b32(&env, 0xE2),
+    );
     assert_ne!(
         env.events().all(),
         [].as_slice(),
@@ -728,18 +777,28 @@ fn auth_approve_seal_signer_succeeds() {
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
     client.create_seal_policy(&admin, &1, &2, &86400u64, &0u64);
     client.add_seal_policy_signer(&admin, &1, &issuer1);
-    client.approve_seal(&issuer1, &b32(&env, 0xF0), &b32(&env, 0xF1), &b32(&env, 0xF2));
+    client.approve_seal(
+        &issuer1,
+        &b32(&env, 0xF0),
+        &b32(&env, 0xF1),
+        &b32(&env, 0xF2),
+    );
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #70)")]
 fn auth_approve_seal_non_signer_rejected() {
     let (env, contract_id, admin, issuer1, _) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
     let outsider = Address::generate(&env);
     client.create_seal_policy(&admin, &1, &2, &86400u64, &0u64);
     client.add_seal_policy_signer(&admin, &1, &issuer1);
-    client.approve_seal(&outsider, &b32(&env, 0xF3), &b32(&env, 0xF4), &b32(&env, 0xF5));
+    client.approve_seal(
+        &outsider,
+        &b32(&env, 0xF3),
+        &b32(&env, 0xF4),
+        &b32(&env, 0xF5),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -781,11 +840,16 @@ fn three_of_three_threshold() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic(expected = "Error(Contract, #14)")]
+#[should_panic(expected = "Error(Contract, #68)")]
 fn approval_no_active_policy() {
     let (env, contract_id, admin, issuer1, _) = setup_two_issuers();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
 
     // No policy created
-    client.approve_seal(&issuer1, &b32(&env, 0x20), &b32(&env, 0x21), &b32(&env, 0x22));
+    client.approve_seal(
+        &issuer1,
+        &b32(&env, 0x20),
+        &b32(&env, 0x21),
+        &b32(&env, 0x22),
+    );
 }

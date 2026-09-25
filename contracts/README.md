@@ -21,6 +21,60 @@ cargo test
 stellar contract build
 ```
 
+## Threshold Seal Policy (#124, restored for #336)
+
+Tier-3 Public Seals optionally require m-of-n institutional approvals instead
+of a single issuer. The policy boundary and its authorization invariants are
+covered by `contracts/harpocrates-registry/src/test_threshold_seal.rs`.
+
+Run focused:
+
+```bash
+cd contracts
+cargo test -p harpocrates-registry test_threshold_seal -- --nocapture
+```
+
+### Authorization surface
+
+- `create_seal_policy`, `add_seal_policy_signer`, `remove_seal_policy_signer`,
+  and `cancel_seal_policy` are admin-only (`Unauthorized` otherwise).
+- `approve_seal` requires the signer's own auth. Authorization is checked in
+  a fixed order: the policy must exist and be active (`UnknownSealPolicy`,
+  `InactiveSealPolicy`, `PolicyExpired`), the signer must be a member of the
+  policy's signer set (`UnknownPolicySigner`), and the signer must be an
+  active issuer (`UnknownIssuer`). Membership of the signer set is the primary
+  authorization boundary.
+- Approvals are idempotent per (proof_id, signer): a duplicate approval from
+  the same signer returns `false` and changes nothing, including after
+  finalization. A distinct signer approving an already-finalized proof gets
+  `AlreadyFinalized`.
+- `finalize_seal` carries no special authority: it can only finalize what the
+  recorded, unexpired approvals from active issuers already prove
+  (`ThresholdNotMet` otherwise).
+
+### Trust-boundary invariants under test
+
+- Expired approvals (`approval_ttl`) and revoked issuers stop counting before
+  finalization; a seal already finalized is not invalidated by later issuer
+  revocation.
+- Finalization is atomic: threshold met in `approve_seal` writes the proof in
+  the same invocation, emits `SealFinalized`, and can never be re-finalized.
+- No active/expired/cancelled policy blocks approval entirely.
+- Signer sets are bounded (`MAX_SIGNERS`, `max_signers`), duplicates are
+  no-ops, and adding a signer never bypasses issuer liveness checks.
+- Events (`SealPolicyCreated`, `SealPolicyCancelled`, `SealApprovalRecorded`,
+  `SealFinalized`) carry only hashes, counts, addresses, and timestamps —
+  never proof bytes, witnesses, or media.
+
+### Migration and rollback
+
+`SealPolicyCount`, `SealPolicy(v)`, `SealPolicySigners(v)`,
+`SealApproval(proof_id, signer)`, and `ThresholdSigners(proof_id)` are additive
+storage keys; upgrading an initialized contract starts with no policy and all
+existing records untouched. The threshold error codes are appended at the end
+of `RegistryError` (#68–#76, append-only) so existing codes are unchanged.
+Rollback is a plain wasm redeploy; older readers ignore the new keys.
+
 ## Identity-Tier Property Tests
 
 Issue #345 adds focused property tests for identity-tier invariants in

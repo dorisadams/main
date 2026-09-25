@@ -1,19 +1,14 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Bytes, BytesN, Env,
-};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Bytes, BytesN, Env};
 
 #[contract]
 struct MockNoirVerifier;
 
 #[contractimpl]
 impl MockNoirVerifier {
-    pub fn verify_proof(_env: Env, _public_inputs: Bytes, _proof: Bytes) {
-    }
+    pub fn verify_proof(_env: Env, _public_inputs: Bytes, _proof: Bytes) {}
 }
 
 fn bytes32(env: &Env, value: u8) -> BytesN<32> {
@@ -95,7 +90,13 @@ fn test_get_nonexistent_schema() {
 fn test_add_schema_requires_admin() {
     let (env, client, _) = setup_env();
     let non_admin = Address::generate(&env);
-    client.add_schema(&non_admin, &bytes32(&env, 0x01), &bytes32(&env, 0x02), &1, &2);
+    client.add_schema(
+        &non_admin,
+        &bytes32(&env, 0x01),
+        &bytes32(&env, 0x02),
+        &1,
+        &2,
+    );
 }
 
 #[test]

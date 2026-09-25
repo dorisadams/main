@@ -34,20 +34,22 @@ fn b32u(env: &Env, pos: usize, v: u8) -> BytesN<32> {
 /// seal proof. Returns everything callers need.
 fn make_env() -> (
     Env,
-    Address, // contract_id
-    Address, // admin
-    Address, // source
-    Address, // issuer
+    Address,    // contract_id
+    Address,    // admin
+    Address,    // source
+    Address,    // issuer
     BytesN<32>, // source_proof_id
     BytesN<32>, // seal_proof_id
 ) {
     let env = Env::default();
     env.mock_all_auths();
+    // Start at a non-zero timestamp so `resolved_at > 0` assertions hold.
+    env.ledger().set_timestamp(1_000_000);
 
     let contract_id = env.register(HarpocratesRegistry, ());
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
 
-    let admin  = Address::generate(&env);
+    let admin = Address::generate(&env);
     let source = Address::generate(&env);
     let issuer = Address::generate(&env);
 
@@ -63,14 +65,17 @@ fn make_env() -> (
     );
 
     let seal_proof_id = b32(&env, 0x11);
-    client.register_seal(
-        &issuer,
-        &b32(&env, 0x12),
-        &b32(&env, 0x13),
-        &seal_proof_id,
-    );
+    client.register_seal(&issuer, &b32(&env, 0x12), &b32(&env, 0x13), &seal_proof_id);
 
-    (env, contract_id, admin, source, issuer, source_proof_id, seal_proof_id)
+    (
+        env,
+        contract_id,
+        admin,
+        source,
+        issuer,
+        source_proof_id,
+        seal_proof_id,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -82,25 +87,29 @@ fn open_dispute_stores_record() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
     let client = HarpocratesRegistryClient::new(&env, &cid);
 
-    let reporter    = Address::generate(&env);
-    let dispute_id  = b32(&env, 0xD1);
-    let rep_hash    = b32(&env, 0xE1);
-    let commitment  = b32(&env, 0xC1);
+    let reporter = Address::generate(&env);
+    let dispute_id = b32(&env, 0xD1);
+    let rep_hash = b32(&env, 0xE1);
+    let commitment = b32(&env, 0xC1);
 
     let rec = client.open_dispute(
-        &reporter, &rep_hash, &dispute_id, &spid,
-        &DisputeReason::ContentError, &commitment,
+        &reporter,
+        &rep_hash,
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &commitment,
     );
 
-    assert_eq!(rec.status,           DisputeStatus::Open);
-    assert_eq!(rec.dispute_id,       dispute_id);
-    assert_eq!(rec.proof_id,         spid);
-    assert_eq!(rec.reason,           DisputeReason::ContentError);
-    assert_eq!(rec.reporter_hash,    rep_hash);
-    assert_eq!(rec.commitment_hash,  commitment);
+    assert_eq!(rec.status, DisputeStatus::Open);
+    assert_eq!(rec.dispute_id, dispute_id);
+    assert_eq!(rec.proof_id, spid);
+    assert_eq!(rec.reason, DisputeReason::ContentError);
+    assert_eq!(rec.reporter_hash, rep_hash);
+    assert_eq!(rec.commitment_hash, commitment);
     assert_eq!(rec.response_commitment, None);
-    assert_eq!(rec.superseded_by,   None);
-    assert_eq!(rec.resolved_at,     0);
+    assert_eq!(rec.superseded_by, None);
+    assert_eq!(rec.resolved_at, 0);
 
     let fetched = client.get_dispute(&dispute_id).expect("dispute not found");
     assert_eq!(fetched.status, DisputeStatus::Open);
@@ -116,17 +125,25 @@ fn duplicate_dispute_id_rejected() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
     let client = HarpocratesRegistryClient::new(&env, &cid);
 
-    let reporter   = Address::generate(&env);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xD2);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xE2), &dispute_id, &spid,
-        &DisputeReason::MetadataError, &b32(&env, 0xC2),
+        &reporter,
+        &b32(&env, 0xE2),
+        &dispute_id,
+        &spid,
+        &DisputeReason::MetadataError,
+        &b32(&env, 0xC2),
     );
 
     let result = client.try_open_dispute(
-        &reporter, &b32(&env, 0xE2), &dispute_id, &spid,
-        &DisputeReason::MetadataError, &b32(&env, 0xC2),
+        &reporter,
+        &b32(&env, 0xE2),
+        &dispute_id,
+        &spid,
+        &DisputeReason::MetadataError,
+        &b32(&env, 0xC2),
     );
     assert!(result.is_err());
 }
@@ -142,8 +159,12 @@ fn dispute_nonexistent_proof_rejected() {
 
     let reporter = Address::generate(&env);
     let result = client.try_open_dispute(
-        &reporter, &b32(&env, 0xE3), &b32(&env, 0xD3),
-        &b32(&env, 0xFF), &DisputeReason::Other, &b32(&env, 0xC3),
+        &reporter,
+        &b32(&env, 0xE3),
+        &b32(&env, 0xD3),
+        &b32(&env, 0xFF),
+        &DisputeReason::Other,
+        &b32(&env, 0xC3),
     );
     assert!(result.is_err());
 }
@@ -168,12 +189,19 @@ fn open_dispute_cap_enforced() {
             &b32u(&env, 2, (0xC0 + i) as u8),
         );
     }
-    assert_eq!(client.get_open_dispute_count(&spid), MAX_OPEN_DISPUTES_PER_PROOF);
+    assert_eq!(
+        client.get_open_dispute_count(&spid),
+        MAX_OPEN_DISPUTES_PER_PROOF
+    );
 
     let reporter = Address::generate(&env);
     let result = client.try_open_dispute(
-        &reporter, &b32(&env, 0xEF), &b32(&env, 0xDF),
-        &spid, &DisputeReason::Other, &b32(&env, 0xCF),
+        &reporter,
+        &b32(&env, 0xEF),
+        &b32(&env, 0xDF),
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0xCF),
     );
     assert!(result.is_err());
 }
@@ -185,13 +213,17 @@ fn open_dispute_cap_enforced() {
 #[test]
 fn reporter_cooldown_enforced() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
-    let client   = HarpocratesRegistryClient::new(&env, &cid);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
     let reporter = Address::generate(&env);
     let rep_hash = b32(&env, 0xE5);
 
     client.open_dispute(
-        &reporter, &rep_hash, &b32(&env, 0xD5), &spid,
-        &DisputeReason::TierMismatch, &b32(&env, 0xC5),
+        &reporter,
+        &rep_hash,
+        &b32(&env, 0xD5),
+        &spid,
+        &DisputeReason::TierMismatch,
+        &b32(&env, 0xC5),
     );
 
     // Still on cooldown after 1 second
@@ -199,16 +231,24 @@ fn reporter_cooldown_enforced() {
     env.ledger().set_timestamp(ts + 1);
 
     let result = client.try_open_dispute(
-        &reporter, &rep_hash, &b32(&env, 0xD6), &spid,
-        &DisputeReason::TierMismatch, &b32(&env, 0xC6),
+        &reporter,
+        &rep_hash,
+        &b32(&env, 0xD6),
+        &spid,
+        &DisputeReason::TierMismatch,
+        &b32(&env, 0xC6),
     );
     assert!(result.is_err());
 
     // Past cooldown succeeds
     env.ledger().set_timestamp(ts + REPORTER_COOLDOWN_SECS + 1);
     client.open_dispute(
-        &reporter, &rep_hash, &b32(&env, 0xD7), &spid,
-        &DisputeReason::TierMismatch, &b32(&env, 0xC7),
+        &reporter,
+        &rep_hash,
+        &b32(&env, 0xD7),
+        &spid,
+        &DisputeReason::TierMismatch,
+        &b32(&env, 0xC7),
     );
 }
 
@@ -219,13 +259,17 @@ fn reporter_cooldown_enforced() {
 #[test]
 fn respond_dispute_happy_path() {
     let (env, cid, _admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xAA);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xEA), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xCA),
+        &reporter,
+        &b32(&env, 0xEA),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xCA),
     );
 
     let rec = client.respond_dispute(&source, &dispute_id, &b32(&env, 0xBA));
@@ -241,14 +285,18 @@ fn respond_dispute_happy_path() {
 #[test]
 fn unauthorized_responder_rejected() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
-    let client   = HarpocratesRegistryClient::new(&env, &cid);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
     let reporter = Address::generate(&env);
     let stranger = Address::generate(&env);
     let dispute_id = b32(&env, 0xCC);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xEC), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xCC),
+        &reporter,
+        &b32(&env, 0xEC),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xCC),
     );
 
     let result = client.try_respond_dispute(&stranger, &dispute_id, &b32(&env, 0xDC));
@@ -262,13 +310,17 @@ fn unauthorized_responder_rejected() {
 #[test]
 fn respond_after_deadline_rejected() {
     let (env, cid, _admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xF1);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xE1), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xC1),
+        &reporter,
+        &b32(&env, 0xE1),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xC1),
     );
 
     let ts = env.ledger().timestamp();
@@ -285,13 +337,17 @@ fn respond_after_deadline_rejected() {
 #[test]
 fn resolve_dispute_happy_path() {
     let (env, cid, admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xBB);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xEB), &dispute_id, &spid,
-        &DisputeReason::PrivacyViolation, &b32(&env, 0xCB),
+        &reporter,
+        &b32(&env, 0xEB),
+        &dispute_id,
+        &spid,
+        &DisputeReason::PrivacyViolation,
+        &b32(&env, 0xCB),
     );
     client.respond_dispute(&source, &dispute_id, &b32(&env, 0xDB));
 
@@ -312,13 +368,17 @@ fn resolve_dispute_happy_path() {
 #[test]
 fn resolve_after_deadline_rejected() {
     let (env, cid, admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xF2);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xE2), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xC2),
+        &reporter,
+        &b32(&env, 0xE2),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xC2),
     );
     client.respond_dispute(&source, &dispute_id, &b32(&env, 0xD2));
 
@@ -336,13 +396,17 @@ fn resolve_after_deadline_rejected() {
 #[test]
 fn cannot_resolve_open_dispute() {
     let (env, cid, admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0xF4);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xE4), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xC4),
+        &reporter,
+        &b32(&env, 0xE4),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xC4),
     );
 
     let result = client.try_resolve_dispute(&admin, &dispute_id);
@@ -356,14 +420,18 @@ fn cannot_resolve_open_dispute() {
 #[test]
 fn non_admin_cannot_resolve() {
     let (env, cid, _admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
-    let stranger   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
+    let stranger = Address::generate(&env);
     let dispute_id = b32(&env, 0xDD);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0xED), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0xCD),
+        &reporter,
+        &b32(&env, 0xED),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0xCD),
     );
     client.respond_dispute(&source, &dispute_id, &b32(&env, 0xDE));
 
@@ -378,13 +446,17 @@ fn non_admin_cannot_resolve() {
 #[test]
 fn dismiss_open_dispute_releases_counter() {
     let (env, cid, admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x71);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x72), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x73),
+        &reporter,
+        &b32(&env, 0x72),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x73),
     );
     assert_eq!(client.get_open_dispute_count(&spid), 1);
 
@@ -405,13 +477,17 @@ fn dismiss_open_dispute_releases_counter() {
 #[test]
 fn dismiss_responded_dispute_succeeds() {
     let (env, cid, admin, source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x74);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x75), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x76),
+        &reporter,
+        &b32(&env, 0x75),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x76),
     );
     client.respond_dispute(&source, &dispute_id, &b32(&env, 0x77));
 
@@ -427,13 +503,17 @@ fn dismiss_responded_dispute_succeeds() {
 #[test]
 fn dismiss_closed_dispute_rejected() {
     let (env, cid, admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x78);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x79), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x7A),
+        &reporter,
+        &b32(&env, 0x79),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x7A),
     );
     client.dismiss_dispute(&admin, &dispute_id);
 
@@ -446,14 +526,18 @@ fn dismiss_closed_dispute_rejected() {
 #[test]
 fn non_admin_cannot_dismiss() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
-    let stranger   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
+    let stranger = Address::generate(&env);
     let dispute_id = b32(&env, 0x7B);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x7C), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x7D),
+        &reporter,
+        &b32(&env, 0x7C),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x7D),
     );
     let result = client.try_dismiss_dispute(&stranger, &dispute_id);
     assert!(result.is_err());
@@ -466,13 +550,17 @@ fn non_admin_cannot_dismiss() {
 #[test]
 fn supersede_links_correcting_proof() {
     let (env, cid, admin, _source, _issuer, spid, sealid) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x81);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x82), &dispute_id, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0x83),
+        &reporter,
+        &b32(&env, 0x82),
+        &dispute_id,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0x83),
     );
     assert_eq!(client.get_open_dispute_count(&spid), 1);
 
@@ -484,23 +572,24 @@ fn supersede_links_correcting_proof() {
 
     // The superseding proof and the disputed proof both survive unchanged.
     assert!(client.get_proof(&spid).is_some());
-    assert_eq!(
-        client.get_proof(&spid).unwrap().status,
-        STATUS_REGISTERED,
-    );
+    assert_eq!(client.get_proof(&spid).unwrap().status, STATUS_REGISTERED,);
     assert!(client.get_proof(&sealid).is_some());
 }
 
 #[test]
 fn supersede_unknown_proof_rejected() {
     let (env, cid, admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x84);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x85), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x86),
+        &reporter,
+        &b32(&env, 0x85),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x86),
     );
 
     let result = client.try_supersede_dispute(&admin, &dispute_id, &b32(&env, 0xFF));
@@ -510,13 +599,17 @@ fn supersede_unknown_proof_rejected() {
 #[test]
 fn supersede_self_cycle_rejected() {
     let (env, cid, admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x87);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x88), &dispute_id, &spid,
-        &DisputeReason::Other, &b32(&env, 0x89),
+        &reporter,
+        &b32(&env, 0x88),
+        &dispute_id,
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0x89),
     );
 
     let result = client.try_supersede_dispute(&admin, &dispute_id, &spid);
@@ -532,16 +625,24 @@ fn supersede_reverse_cycle_rejected() {
     // Dispute on spid, corrected by sealid  =>  sealid supersedes spid.
     let d1 = b32(&env, 0x8A);
     client.open_dispute(
-        &Address::generate(&env), &b32(&env, 0x8B), &d1, &spid,
-        &DisputeReason::ContentError, &b32(&env, 0x8C),
+        &Address::generate(&env),
+        &b32(&env, 0x8B),
+        &d1,
+        &spid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0x8C),
     );
     client.supersede_dispute(&admin, &d1, &sealid);
 
     // Attempting the reverse (spid supersedes sealid) must be rejected.
     let d2 = b32(&env, 0x8D);
     client.open_dispute(
-        &Address::generate(&env), &b32(&env, 0x8E), &d2, &sealid,
-        &DisputeReason::ContentError, &b32(&env, 0x8F),
+        &Address::generate(&env),
+        &b32(&env, 0x8E),
+        &d2,
+        &sealid,
+        &DisputeReason::ContentError,
+        &b32(&env, 0x8F),
     );
     let result = client.try_supersede_dispute(&admin, &d2, &spid);
     assert!(result.is_err());
@@ -554,13 +655,17 @@ fn supersede_reverse_cycle_rejected() {
 #[test]
 fn dispute_does_not_change_proof_status() {
     let (env, cid, _admin, _source, _issuer, spid, _) = make_env();
-    let client     = HarpocratesRegistryClient::new(&env, &cid);
-    let reporter   = Address::generate(&env);
+    let client = HarpocratesRegistryClient::new(&env, &cid);
+    let reporter = Address::generate(&env);
     let dispute_id = b32(&env, 0x91);
 
     client.open_dispute(
-        &reporter, &b32(&env, 0x92), &dispute_id, &spid,
-        &DisputeReason::MetadataError, &b32(&env, 0x93),
+        &reporter,
+        &b32(&env, 0x92),
+        &dispute_id,
+        &spid,
+        &DisputeReason::MetadataError,
+        &b32(&env, 0x93),
     );
 
     assert_eq!(
@@ -578,7 +683,7 @@ fn dismiss_frees_open_dispute_slot() {
     let mut first = b32(&env, 0xA0);
 
     for i in 0..MAX_OPEN_DISPUTES_PER_PROOF {
-        let reporter   = Address::generate(&env);
+        let reporter = Address::generate(&env);
         let dispute_id = b32u(&env, 1, (0xA0 + i) as u8);
         if i == 0 {
             first = dispute_id.clone();
@@ -592,16 +697,29 @@ fn dismiss_frees_open_dispute_slot() {
             &b32u(&env, 2, (0xC0 + i) as u8),
         );
     }
-    assert_eq!(client.get_open_dispute_count(&spid), MAX_OPEN_DISPUTES_PER_PROOF);
+    assert_eq!(
+        client.get_open_dispute_count(&spid),
+        MAX_OPEN_DISPUTES_PER_PROOF
+    );
 
     client.dismiss_dispute(&admin, &first);
-    assert_eq!(client.get_open_dispute_count(&spid), MAX_OPEN_DISPUTES_PER_PROOF - 1);
+    assert_eq!(
+        client.get_open_dispute_count(&spid),
+        MAX_OPEN_DISPUTES_PER_PROOF - 1
+    );
 
     client.open_dispute(
-        &Address::generate(&env), &b32(&env, 0xBF), &b32(&env, 0xAF),
-        &spid, &DisputeReason::Other, &b32(&env, 0xCF),
+        &Address::generate(&env),
+        &b32(&env, 0xBF),
+        &b32(&env, 0xAF),
+        &spid,
+        &DisputeReason::Other,
+        &b32(&env, 0xCF),
     );
-    assert_eq!(client.get_open_dispute_count(&spid), MAX_OPEN_DISPUTES_PER_PROOF);
+    assert_eq!(
+        client.get_open_dispute_count(&spid),
+        MAX_OPEN_DISPUTES_PER_PROOF
+    );
 }
 
 // Boundary: omitted (`None`) reason codes / unknown dispute ids are safe reads.
@@ -611,4 +729,3 @@ fn get_dispute_unknown_id_is_none() {
     let client = HarpocratesRegistryClient::new(&env, &cid);
     assert!(client.get_dispute(&b32(&env, 0xFE)).is_none());
 }
-

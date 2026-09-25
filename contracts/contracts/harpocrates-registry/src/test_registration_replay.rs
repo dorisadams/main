@@ -114,15 +114,7 @@ const ONE_DAY: u64 = 24 * 60 * 60;
 /// Fresh registry with admin, verifier, credential root, issuer, source, and
 /// a delegate pre-granted both registration scopes.
 #[cfg(test)]
-fn setup() -> (
-    Env,
-    Address,
-    Address,
-    Address,
-    Address,
-    Address,
-    Address,
-) {
+fn setup() -> (Env, Address, Address, Address, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -139,10 +131,28 @@ fn setup() -> (
     client.set_verifier(&admin, &verifier_id);
     client.add_credential_root(&admin, &b32(&env, CRED_ROOT), &b32(&env, 0xFF));
     client.add_issuer(&admin, &issuer, &b32(&env, 0xAA));
-    client.grant_delegation(&source, &delegate, &DELEGATION_SCOPE_REGISTER_SOURCE, &ONE_DAY);
-    client.grant_delegation(&issuer, &delegate, &DELEGATION_SCOPE_REGISTER_SEAL, &ONE_DAY);
+    client.grant_delegation(
+        &source,
+        &delegate,
+        &DELEGATION_SCOPE_REGISTER_SOURCE,
+        &ONE_DAY,
+    );
+    client.grant_delegation(
+        &issuer,
+        &delegate,
+        &DELEGATION_SCOPE_REGISTER_SEAL,
+        &ONE_DAY,
+    );
 
-    (env, contract_id, admin, source, issuer, delegate, verifier_id)
+    (
+        env,
+        contract_id,
+        admin,
+        source,
+        issuer,
+        delegate,
+        verifier_id,
+    )
 }
 
 // ===========================================================================
@@ -188,7 +198,12 @@ fn replay_matrix_positive_anonymous_verified_succeeds() {
 fn replay_matrix_positive_source_succeeds() {
     let (env, contract_id, _, source, _, _, _) = setup();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
-    let record = client.register_source(&source, &b32(&env, 0x21), &b32(&env, 0x22), &b32(&env, 0x23));
+    let record = client.register_source(
+        &source,
+        &b32(&env, 0x21),
+        &b32(&env, 0x22),
+        &b32(&env, 0x23),
+    );
     assert_eq!(record.tier, TIER_CONSISTENT_SOURCE);
     assert_eq!(record.source, Some(source));
 }
@@ -197,7 +212,12 @@ fn replay_matrix_positive_source_succeeds() {
 fn replay_matrix_positive_seal_succeeds() {
     let (env, contract_id, _, _, issuer, _, _) = setup();
     let client = HarpocratesRegistryClient::new(&env, &contract_id);
-    let record = client.register_seal(&issuer, &b32(&env, 0x31), &b32(&env, 0x32), &b32(&env, 0x33));
+    let record = client.register_seal(
+        &issuer,
+        &b32(&env, 0x31),
+        &b32(&env, 0x32),
+        &b32(&env, 0x33),
+    );
     assert_eq!(record.tier, TIER_PUBLIC_SEAL);
     assert_eq!(record.issuer, Some(issuer));
 }
