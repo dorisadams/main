@@ -72,7 +72,8 @@ cargo test -p harpocrates-registry test_threshold_seal -- --nocapture
 `SealApproval(proof_id, signer)`, and `ThresholdSigners(proof_id)` are additive
 storage keys; upgrading an initialized contract starts with no policy and all
 existing records untouched. The threshold error codes are appended at the end
-of `RegistryError` (#68–#76, append-only) so existing codes are unchanged.
+of `RegistryError` (#68–#76, append-only) so existing codes are unchanged; the
+later #317 metadata-envelope errors are appended after them (#77–#80).
 Rollback is a plain wasm redeploy; older readers ignore the new keys.
 
 ## Identity-Tier Property Tests

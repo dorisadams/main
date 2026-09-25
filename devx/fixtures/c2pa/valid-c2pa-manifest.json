@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "valid-c2pa-manifest",
+  "specVersion": "c2pa-v1",
+  "title": "Synthetic Valid C2PA Manifest",
+  "format": "application/x-c2pa",
+  "claimGenerator": "Harpocrates-C2PA-Adapter/1.0",
+  "assertions": [
+    {
+      "label": "harpocrates.metadata",
+      "data": {
+        "protocol": "harpocrates",
+        "version": 1,
+        "tier": "silent",
+        "sourceHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "proofId": "2222222222222222222222222222222222222222222222222222222222222222",
+        "timestamp": "2026-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "ingredients": [],
+  "expect": {
+    "ok": true,
+    "status": "valid"
+  }
+}

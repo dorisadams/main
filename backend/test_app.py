@@ -317,7 +317,8 @@ class AppHardeningTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json["ok"], False)
-        self.assertEqual(response.json["error"]["code"], "VALIDATION_ERROR")
+        self.assertEqual(response.json["error"]["code"], "METADATA_MISSING_FIELD")
+        self.assertEqual(response.json["error"]["field"], "proofId")
         self.assertIn(
             "metadata missing required field",
             response.json["error"]["message"],
@@ -628,7 +629,8 @@ class AppHardeningTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("ISO-8601", response.json["error"])
+        self.assertEqual(response.json["error"]["code"], "METADATA_INVALID_FIELD")
+        self.assertIn("ISO-8601", response.json["error"]["message"])
 
     def test_embed_rejects_non_utc_timestamp(self) -> None:
         response = self.client.post(
@@ -641,7 +643,8 @@ class AppHardeningTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("timezone-aware", response.json["error"])
+        self.assertEqual(response.json["error"]["code"], "METADATA_INVALID_FIELD")
+        self.assertIn("timezone-aware", response.json["error"]["message"])
 
     def test_embed_rejects_far_future_timestamp(self) -> None:
         response = self.client.post(
@@ -654,7 +657,8 @@ class AppHardeningTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("unreasonably far", response.json["error"])
+        self.assertEqual(response.json["error"]["code"], "METADATA_INVALID_FIELD")
+        self.assertIn("unreasonably far", response.json["error"]["message"])
 
 
 def tracking_encrypted_workspace_factory(observed: list[Path]):

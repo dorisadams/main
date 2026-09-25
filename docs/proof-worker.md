@@ -5,12 +5,13 @@
 Silent Witness proof generation (Noir witness execution + UltraHonk proving)
 runs inside a dedicated Web Worker instead of the main thread. This keeps the
 UI responsive during proving and allows in-flight proof generation to be
-cancelled deterministically.
+cancelled deterministically and privacy-safely.
 
 Implementation:
 - `src/workers/proofWorker.ts` — runs inside the worker, wraps `noirClient.ts`
 - `src/workers/proofWorker.types.ts` — shared message/state types
 - `src/workers/proofWorkerClient.ts` — main-thread client (`ProofWorkerClient`)
+- `src/hooks/useEvidence.ts` — Evidence Studio integration + Cancel button
 - `src/workers/multiBrowserWorkerSupport.ts` — multi-browser capability floor for module-worker proving
 
 ## Threat assumptions
@@ -20,32 +21,39 @@ Implementation:
   than the initial transfer.
 - Secrets are transferred to the worker as `ArrayBuffer`s via structured
   clone's transfer list (zero-copy, and the buffer is detached from the
-  sender). The worker zeroes the underlying bytes after use, in a `finally`
-  block, regardless of success or failure.
+  sender). The worker zeroes the underlying bytes as soon as strings are
+  materialised, and again in a `finally` block, including the BUSY reject
+  path.
 - The worker assumes hostile/malformed input is possible (oversized secrets,
   non-hex video hashes) and validates before ever touching the worker or the
   network — see `INVALID_INPUT` below.
 - A stuck or unresponsive worker (e.g. due to a WASM-level hang) is treated
   the same as a crash: it is terminated and replaced, never left running
   indefinitely.
+- Cancel / timeout / destroy / unmount all settle with a stable `CANCELLED`
+  (or `TIMEOUT` / `CRASHED`) code whose message never contains witness values,
+  seeds, proof hex, or media identifiers beyond stage names.
 
 ## State machine
 
 Each `ProofWorkerClient` instance holds a single Web Worker and dispatches
 at most one active proof request at a time.
 
+```
 idle --generate()--> running --resolves/rejects--> idle
-running --generate() again--> immediately rejected with BUSY (original request unaffected)
-running --cancel()--> worker terminated + respawned, request rejects CANCELLED
-running --60s elapsed--> worker terminated + respawned, request rejects TIMEOUT
-running --worker crash (onerror/onmessageerror)--> worker terminated + respawned, all pending requests reject CRASHED
+running --generate() again--> immediately rejected with BUSY (no worker post)
+running --cancel() / AbortSignal--> CANCEL msg + terminate + respawn → CANCELLED
+running --60s elapsed--> worker terminated + respawned → TIMEOUT
+running --worker crash--> worker terminated + respawned → CRASHED
+destroyed --generate()--> CANCELLED
+```
 
-
-Cancellation and timeout both terminate the worker outright rather than
-signalling it cooperatively, because the underlying Noir/UltraHonk calls have
-no cancellation hook and may block the worker's event loop for the duration
-of proving. Terminating and spawning a fresh worker is the only way to
-guarantee an in-flight proof stops promptly.
+Cancellation and timeout both terminate the worker after signalling CANCEL,
+because the underlying Noir/UltraHonk calls have no interruption hook and may
+block the worker event loop for the duration of proving. Terminating and
+spawning a fresh worker is the only way to guarantee an in-flight proof stops
+promptly. A generation counter drops any late messages from the terminated
+worker so they cannot settle a newer request.
 
 ## Error codes
 
@@ -54,7 +62,7 @@ guarantee an in-flight proof stops promptly.
 | `BUSY` | A proof is already running on this client; request rejected immediately without touching the worker. |
 | `INVALID_INPUT` | `videoHash` is not 64 hex characters, a secret is empty, or a secret exceeds the maximum size (256 bytes). Rejected before any worker/network activity. |
 | `UNSUPPORTED_ENVIRONMENT` | Multi-browser capability floor not met (Worker, WebAssembly, SubtleCrypto, BigInt, or ArrayBuffer missing). Rejected before secrets are transferred. |
-| `CANCELLED` | `cancel()` was called for this request. |
+| `CANCELLED` | `cancel()`, `AbortSignal`, `destroy()`, or unmount aborted this request. |
 | `TIMEOUT` | Proof generation exceeded `PROOF_TIMEOUT_MS` (60s). |
 | `CRASHED` | The worker fired `onerror`/`onmessageerror` unexpectedly. |
 | `CIRCUIT_LOAD_FAILED` | Fetching a compiled circuit artifact failed. |
@@ -64,7 +72,7 @@ guarantee an in-flight proof stops promptly.
 
 Run the worker's automated tests:
 
-```powershell
+```bash
 cd frontend
 npx vitest run src/workers/proofWorkerClient.test.ts
 ```
@@ -79,10 +87,11 @@ const { requestId, result } = client.generate(
   { videoHash: '0'.repeat(64), credentialSecret: '123456789', nullifierSecret: '987654321' },
   (stage) => console.log('progress:', stage),
 )
-result.then(r => console.log('RESULT', r)).catch(e => console.log('ERROR', e.code, e.message))
+result.then(r => console.log('RESULT', r.proofBytes)).catch(e => console.log('ERROR', e.code, e.message))
 ```
 
 Call `client.cancel(requestId)` while it's running to confirm cancellation.
+In Evidence Studio, use **Cancel proving** while stage is `proving`.
 
 ## Operational signals
 
@@ -91,19 +100,23 @@ Progress callbacks report only the current stage name (`loading_circuits`,
 values, secrets, or proof material. This is safe to log or surface in UI
 without risk of leaking sensitive data.
 
-## Rollout / rollback
+## Compatibility / migration
 
-This change is additive at the call-site level: `App.tsx`'s
-`attachSilentWitnessProof` now calls `ProofWorkerClient.generate()` instead of
-calling `generateSilentWitnessProof` from `noirClient.ts` directly.
-`noirClient.ts` itself is unchanged and still the single source of truth for
-the actual proving logic — the worker only wraps it.
+- Proof / public-input encodings are unchanged (`noirClient.ts` remains the
+  single proving implementation; the worker only wraps it).
+- Call site moved from a direct `noirClient` import in the evidence flow to
+  `ProofWorkerClient.generate()` inside `useEvidence.attachSilentWitnessProof`.
+- No artifact, contract, or stored-evidence migration is required.
+- Rollback: revert `useEvidence.ts` to call `generateSilentWitnessProof` from
+  `noirClient.ts` on the main thread and hide the Cancel button. No data repair.
 
-To roll back, revert `App.tsx`'s `attachSilentWitnessProof` to call
-`generateSilentWitnessProof` from `noirClient.ts` directly on the main
-thread. No data migration, persisted state, or artifact format changes are
-involved — the change is confined to how/where the existing proving logic is
-invoked.
+## Trust boundary notes
+
+| Boundary | Behaviour on cancel |
+|---|---|
+| Main thread | Pending promise rejects `CANCELLED`; AbortController cleared; no secrets retained (buffers already transferred/detached). |
+| Worker | CANCEL acknowledged; secret `ArrayBuffer`s zeroed; worker then terminated so WASM heap is discarded. |
+| UI | Stage returns to `ready` with a privacy-safe status message (no seeds/proof hex). |
 
 ## Known limitations
 

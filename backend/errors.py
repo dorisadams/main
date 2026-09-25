@@ -78,24 +78,31 @@ def error_response(
     code: str,
     message: str,
     status: int,
+    field: str | None = None,
 ) -> tuple[Response, int]:
     """Return a Flask response tuple for a standardized error envelope.
 
     Args:
-        code: Machine-readable error code (one of the module-level constants).
-        message: Human-readable error description.
+        code: Machine-readable error code (one of the module-level constants,
+            or a canonical code from :mod:`metadata_errors`).
+        message: Human-readable error description. Must be privacy-safe.
         status: HTTP status code.
+        field: Optional *name* of the offending field. Only field names may be
+            exposed here; field values must never be echoed back.
     """
     request_id = _get_request_id()
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "request_id": request_id,
+    }
+    if field:
+        error["field"] = field
     return (
         jsonify(
             {
                 "ok": False,
-                "error": {
-                    "code": code,
-                    "message": message,
-                    "request_id": request_id,
-                },
+                "error": error,
             },
         ),
         status,

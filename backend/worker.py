@@ -10,6 +10,7 @@ from envelope import canonical_metadata_hash
 from stego import embed_metadata, extract_metadata, sha256_file
 from noir import generate_silent_witness
 from app import safe_filename, redact_metadata
+from config import load_config
 
 from storage import get_job_input_path, get_job_output_path
 from tx_verification import verify_transaction_status
@@ -120,6 +121,10 @@ def tx_verification_loop(stop_event: threading.Event):
     Polls the database for pending Stellar transactions and verifies them against Horizon.
     """
     LOGGER.info("Starting transaction verification loop")
+
+    # Load config once; the dataclass is frozen so these values are stable.
+    _config = load_config()
+
     while not stop_event.is_set():
         try:
             if not database_url():
@@ -143,19 +148,24 @@ def tx_verification_loop(stop_event: threading.Event):
                     break
                     
                 tx_hash = row["tx_hash"]
-                LOGGER.info(f"Verifying transaction {tx_hash}")
-                status = verify_transaction_status(tx_hash)
+                LOGGER.info("Verifying transaction (hash redacted)")
+                status = verify_transaction_status(
+                    tx_hash,
+                    connect_timeout=_config.external_fetch_connect_timeout_seconds,
+                    read_timeout=_config.external_fetch_read_timeout_seconds,
+                    max_response_bytes=_config.external_fetch_max_response_bytes,
+                )
                 
                 # Update DB if terminal or missing
                 if status in ('confirmed', 'failed', 'missing'):
-                    LOGGER.info(f"Transaction {tx_hash} resolved to {status}")
+                    LOGGER.info("Transaction resolved to %s", status)
                     update_tx_status(tx_hash, status)
                 else:
                     # Still pending, we will check again next loop
                     pass
 
         except Exception as e:
-            LOGGER.error(f"Error in tx verification loop: {e}")
+            LOGGER.error("Error in tx verification loop: %s", type(e).__name__)
         
         stop_event.wait(15)
 

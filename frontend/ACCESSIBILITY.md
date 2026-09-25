@@ -122,6 +122,34 @@ No evidence file names, video hash values, proof bytes, wallet addresses, or see
 
 ## Local Verification Workflow
 
+### Offline local verification mode
+
+The Verification Portal can verify a received video entirely in the browser
+with zero network calls via the **Offline local check** toggle (a focusable
+`<button type="button">` with `aria-pressed="true"` when active, next to the
+dropzone):
+
+- The received file is hashed locally and its embedded Harpocrates envelope is
+  extracted with the same `stego.extractMetadata` loader the online flow and
+  the batch workspace use — never a second protocol truth.
+- Embedded metadata is structurally validated against the backend envelope
+  grammar; when the envelope carries a video hash, the file is bound to it
+  (`bound` / `tampered` / `unavailable`). Envelopes carrying secret-shaped keys
+  are rejected and rendered as null.
+- Offline mode is only a *local check*: it never produces a confirmed trust
+  decision, never produces a shareable verification link, and never queries a
+  chain, registry, database, or event source. Chain Status reads
+  "Not checked (offline)".
+
+Accessibility notes for offline mode:
+
+- The toggle is keyboard reachable, has `aria-pressed`, disabled while a
+  verification is in flight, and keeps a 44px touch target (`.mode-toggle`).
+- Offline rail blocks announce the reduced trust boundary through
+  `role="status"` regions ("On-chain status was not checked in offline mode.",
+  "NeonDB events were not queried in offline mode.").
+- Offline status copy contains no file names, video hashes, or secret material.
+
 ### 1. Start the dev server
 
 ```bash
@@ -159,6 +187,7 @@ Open `http://localhost:5173` and test with keyboard only (Tab / Shift+Tab / Ente
 - [ ] Credential Seed and Nullifier Seed inputs are reachable; their labels are spoken by VoiceOver/NVDA
 - [ ] The "Register proof" button shows `aria-busy="true"` during processing stages
 - [ ] The verify page file input is reachable by keyboard and labelled
+- [ ] The "Offline local check" toggle is reachable and shows `aria-pressed` toggling in DevTools
 
 ### 4. Screen reader smoke test (macOS VoiceOver)
 
@@ -190,6 +219,7 @@ Use browser DevTools Accessibility panel or the [WebAIM Contrast Checker](https:
 - No new runtime dependencies (the hooks use only React built-ins).
 - Bundle size impact: ~2 KB for `useA11y.ts` (minified + gzipped ≈ 0.7 KB).
 - The `.sr-only` elements and live regions add ~5 DOM nodes unconditionally; no performance impact.
+- Offline verification (`offlineVerification.ts`) is a pure client module with an injectable extractor and adds no runtime dependencies; its dynamic `stego` import is code-split so the online-only bundle is unaffected.
 
 ---
 
@@ -204,6 +234,12 @@ This change is additive — it only adds ARIA attributes, live regions, focus ma
 
 No data migrations, localStorage schema changes, or contract state changes are involved.
 
+For the offline local verification mode specifically: delete
+`frontend/src/offlineVerification.ts` and its test, revert
+`frontend/src/hooks/useVerification.ts`, `frontend/src/views/VerifyView.tsx`,
+and `frontend/src/App.css`, and the portal ships with the online-only flow.
+Offline mode persists nothing and writes no storage, so rollback is lossless.
+
 ---
 
 ## Operational Signals
@@ -215,6 +251,9 @@ No data migrations, localStorage schema changes, or contract state changes are i
 | Proving started | `#live-status` + `#studio-status` | polite | safe |
 | Evidence ready | `#live-status` + `#studio-status` | polite | safe |
 | Registration submitted | `#live-status` + `#studio-status` | polite | safe (status code only) |
+| Offline check started | verify progress region | polite | safe |
+| Offline result (local check only) | verify result region | polite | safe (never a confirm framing) |
+| Offline dependency unavailable | verify result region | assertive | safe ("No trust decision was made.") |
 | Wallet connected | `#live-status` | polite | safe (no key in message) |
 | Network mismatch | `#live-alert` + banner `role="alert"` | assertive | safe |
 | Any error | `#live-alert` | assertive | sanitised |

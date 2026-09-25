@@ -593,6 +593,11 @@ fn test_batch_register_max_size() {
         elements.push((vh, credential_root.clone(), nf));
     }
 
+    // A max-size batch plus the #317 auto-stamped envelope rows crosses the
+    // default 100-entry footprint limit, so relax enforcement for this
+    // deliberately heaviest single invocation.
+    env.cost_estimate().disable_resource_limits();
+
     let pi = build_aggregated_public_inputs(&env, &aggregation_domain(&env), &elements);
     let results = client.register_batch_verified(
         &batch_id,

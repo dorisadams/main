@@ -12,6 +12,11 @@ import urllib.error
 from psycopg.types.json import Jsonb
 
 from db import get_connection, database_url
+from fetch_external import (
+    FetchTimeoutError,
+    ResponseTooLargeError,
+    safe_urlopen,
+)
 
 LOGGER = logging.getLogger("harpocrates.webhook")
 if not LOGGER.handlers:
@@ -19,6 +24,12 @@ if not LOGGER.handlers:
     handler.setFormatter(logging.Formatter("%(message)s"))
     LOGGER.addHandler(handler)
 LOGGER.setLevel(logging.INFO)
+
+# Module-level defaults — overridden by callers that pass explicit values
+# (typically sourced from AppConfig).
+_DEFAULT_CONNECT_TIMEOUT: float = 5.0
+_DEFAULT_READ_TIMEOUT: float = 10.0
+_DEFAULT_MAX_RESPONSE_BYTES: int = 65_536  # 64 KiB
 
 
 MAX_RETRIES = 5
@@ -170,7 +181,13 @@ def sign_payload(payload_bytes: bytes, secret: str, timestamp: int) -> str:
     return mac.hexdigest()
 
 
-def dispatch_webhook(delivery: dict) -> None:
+def dispatch_webhook(
+    delivery: dict,
+    *,
+    connect_timeout: float = _DEFAULT_CONNECT_TIMEOUT,
+    read_timeout: float = _DEFAULT_READ_TIMEOUT,
+    max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
+) -> None:
     url = delivery["url"]
     secret = delivery["secret_key"]
     payload = delivery["payload"]
@@ -178,32 +195,67 @@ def dispatch_webhook(delivery: dict) -> None:
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     timestamp = int(time.time())
     signature = sign_payload(payload_bytes, secret, timestamp)
-    
+
     headers = {
         "Content-Type": "application/json",
         "X-Harpocrates-Signature": f"t={timestamp},v1={signature}",
-        "User-Agent": "Harpocrates-Webhook/1.0"
+        "User-Agent": "Harpocrates-Webhook/1.0",
     }
 
     req = urllib.request.Request(url, data=payload_bytes, headers=headers, method="POST")
-    
+
     success = False
     status_code = None
-    
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            status_code = response.getcode()
-            if status_code and 200 <= status_code < 300:
-                success = True
-            else:
-                LOGGER.warning(f"Webhook {delivery['delivery_id']} failed with status {status_code}")
-    except urllib.error.HTTPError as e:
-        status_code = e.code
-        LOGGER.warning(f"Webhook {delivery['delivery_id']} HTTP error {e.code}")
-    except Exception as e:
-        LOGGER.warning(f"Webhook {delivery['delivery_id']} failed: {e}")
 
-    update_delivery_status(delivery["delivery_id"], success, status_code, delivery["retry_count"])
+    try:
+        result = safe_urlopen(
+            req,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            max_bytes=max_response_bytes,
+        )
+        status_code = result.status
+        if 200 <= status_code < 300:
+            success = True
+        else:
+            LOGGER.warning(
+                "Webhook delivery %d: non-2xx status %d",
+                delivery["delivery_id"],
+                status_code,
+            )
+
+    except FetchTimeoutError as exc:
+        LOGGER.warning(
+            "Webhook delivery %d: timeout — %s",
+            delivery["delivery_id"],
+            exc,
+        )
+
+    except ResponseTooLargeError as exc:
+        LOGGER.warning(
+            "Webhook delivery %d: oversized response — %s",
+            delivery["delivery_id"],
+            exc,
+        )
+
+    except urllib.error.HTTPError as exc:
+        status_code = exc.code
+        LOGGER.warning(
+            "Webhook delivery %d: HTTP error %d",
+            delivery["delivery_id"],
+            exc.code,
+        )
+
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "Webhook delivery %d: unexpected error — %s",
+            delivery["delivery_id"],
+            type(exc).__name__,
+        )
+
+    update_delivery_status(
+        delivery["delivery_id"], success, status_code, delivery["retry_count"]
+    )
 
 
 class WebhookWorker(threading.Thread):

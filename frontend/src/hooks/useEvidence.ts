@@ -1,12 +1,20 @@
 /**
  * useEvidence — manages the full evidence creation flow:
  * hashing → embedding → (optional) Noir proving → Stellar registration.
+ *
+ * Silent Witness proving runs in a cancellable Web Worker so the UI stays
+ * responsive and in-flight proofs can be aborted without leaking witness
+ * material (see docs/proof-worker.md).
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Building2, Fingerprint, KeyRound } from 'lucide-react'
 import type { IdentityTier, ProofPackage, Stage } from '../types'
 import type { RegisterProofResult } from '../stellarTypes'
+import {
+  ProofWorkerClient,
+  ProofWorkerError,
+} from '../workers/proofWorkerClient'
 
 export const TIERS = [
   {
@@ -52,6 +60,8 @@ export type UseEvidenceReturn = {
   networkMismatch: string | null
   handleEvidence: (nextFile: File | null) => Promise<void>
   registerProof: (wallet: string) => Promise<void>
+  /** Cancel an in-flight Silent Witness proof generation (no-op if idle). */
+  cancelProving: () => void
 }
 
 export function useEvidence(): UseEvidenceReturn {
@@ -66,10 +76,39 @@ export function useEvidence(): UseEvidenceReturn {
   const [registration, setRegistration] = useState<RegisterProofResult | null>(null)
   const [networkMismatch, setNetworkMismatch] = useState<string | null>(null)
 
+  const proofClientRef = useRef<ProofWorkerClient | null>(null)
+  const activeRequestIdRef = useRef<string | null>(null)
+  const proveAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      proveAbortRef.current?.abort()
+      proveAbortRef.current = null
+      activeRequestIdRef.current = null
+      proofClientRef.current?.destroy()
+      proofClientRef.current = null
+    }
+  }, [])
+
   const selectedTierMeta = useMemo(
     () => TIERS.find((t) => t.id === selectedTier) ?? TIERS[0],
     [selectedTier],
   )
+
+  function getProofClient(): ProofWorkerClient {
+    if (!proofClientRef.current) {
+      proofClientRef.current = new ProofWorkerClient()
+    }
+    return proofClientRef.current
+  }
+
+  function cancelProving() {
+    const requestId = activeRequestIdRef.current
+    proveAbortRef.current?.abort()
+    if (requestId && proofClientRef.current) {
+      proofClientRef.current.cancel(requestId)
+    }
+  }
 
   async function handleEvidence(nextFile: File | null) {
     if (!nextFile) return
@@ -176,8 +215,20 @@ export function useEvidence(): UseEvidenceReturn {
       setStage('registered')
       setMessage(`Registration submitted with Stellar status: ${result.status}.`)
     } catch (error) {
+      if (error instanceof ProofWorkerError && error.code === 'CANCELLED') {
+        setStage('ready')
+        setMessage('Proof generation cancelled. Witness buffers were discarded; you can register again when ready.')
+        return
+      }
       setStage('error')
-      setMessage(error instanceof Error ? error.message : 'Stellar registration failed.')
+      // Privacy: never surface raw worker payloads that might echo inputs.
+      const safeMessage =
+        error instanceof ProofWorkerError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Stellar registration failed.'
+      setMessage(safeMessage)
     }
   }
 
@@ -187,7 +238,7 @@ export function useEvidence(): UseEvidenceReturn {
     }
 
     setStage('proving')
-    setMessage('Generating Noir UltraHonk proof in this browser.')
+    setMessage('Generating Noir UltraHonk proof in a cancellable browser worker.')
 
     const { fieldSecret } = await import('../utils')
     const [credentialSecret, nullifierSecret] = await Promise.all([
@@ -195,16 +246,36 @@ export function useEvidence(): UseEvidenceReturn {
       fieldSecret('nullifier', nullifierSeed.trim()),
     ])
 
-    const { generateSilentWitnessProof } = await import('../noirClient')
-    const silentWitness = await generateSilentWitnessProof({
-      videoHash: nextProof.videoHash,
-      credentialSecret,
-      nullifierSecret,
-    })
+    const client = getProofClient()
+    const abort = new AbortController()
+    proveAbortRef.current = abort
 
-    const nextWithProof: ProofPackage = { ...nextProof, silentWitness }
-    setProof(nextWithProof)
-    return nextWithProof
+    const { requestId, result } = client.generate(
+      {
+        videoHash: nextProof.videoHash,
+        credentialSecret,
+        nullifierSecret,
+      },
+      (stageName) => {
+        setMessage(`Generating proof (${stageName.replace(/_/g, ' ')})…`)
+      },
+      abort.signal,
+    )
+    activeRequestIdRef.current = requestId
+
+    try {
+      const silentWitness = await result
+      const nextWithProof: ProofPackage = { ...nextProof, silentWitness }
+      setProof(nextWithProof)
+      return nextWithProof
+    } finally {
+      if (activeRequestIdRef.current === requestId) {
+        activeRequestIdRef.current = null
+      }
+      if (proveAbortRef.current === abort) {
+        proveAbortRef.current = null
+      }
+    }
   }
 
   return {
@@ -224,5 +295,6 @@ export function useEvidence(): UseEvidenceReturn {
     networkMismatch,
     handleEvidence,
     registerProof,
+    cancelProving,
   }
 }

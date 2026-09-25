@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "oversized-manifest",
+  "specVersion": "c2pa-v1",
+  "assertions": [
+    {"label": "a0"}, {"label": "a1"}, {"label": "a2"}, {"label": "a3"},
+    {"label": "a4"}, {"label": "a5"}, {"label": "a6"}, {"label": "a7"},
+    {"label": "a8"}, {"label": "a9"}, {"label": "a10"}, {"label": "a11"},
+    {"label": "a12"}, {"label": "a13"}, {"label": "a14"}, {"label": "a15"},
+    {"label": "a16"}, {"label": "a17"}, {"label": "a18"}, {"label": "a19"},
+    {"label": "a20"}, {"label": "a21"}, {"label": "a22"}, {"label": "a23"},
+    {"label": "a24"}, {"label": "a25"}, {"label": "a26"}, {"label": "a27"},
+    {"label": "a28"}, {"label": "a29"}, {"label": "a30"}, {"label": "a31"},
+    {"label": "a32"}, {"label": "a33"}, {"label": "a34"}
+  ],
+  "expect": {
+    "ok": false,
+    "status": "oversized",
+    "errorCode": "ERR_OVERSIZED"
+  }
+}

@@ -18,6 +18,13 @@ vi.mock('../services/evidenceService', () => ({
   fetchRecentEvents: vi.fn(),
 }))
 
+// Offline mode extracts via the local stego loader; in jsdom the real video
+// decode never settles, so stub it deterministically.
+vi.mock('../stego', () => ({
+  extractMetadata: vi.fn(),
+  MalformedEvidenceError: class MalformedEvidenceError extends Error {},
+}))
+
 async function getVerifMock() {
   const mod = await import('../services/verificationService')
   return mod as unknown as {
@@ -437,5 +444,181 @@ describe('useVerification – mobile viewport behavior', () => {
     // Safe message is truncated/stable, not 1000 chars
     expect(result.current.verifyResult.length).toBeLessThan(500)
     expect(result.current.verifyResult).not.toContain('A'.repeat(100))
+  })
+})
+
+// ── offline mode ───────────────────────────────────────────────────────
+
+function validEmbeddedMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    protocol: 'harpocrates',
+    version: 1,
+    tier: 'silent',
+    sourceHash: 'a'.repeat(64),
+    proofId: 'b'.repeat(64),
+    timestamp: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+describe('useVerification – offline mode', () => {
+  async function getStegoMock() {
+    const mod = await import('../stego')
+    return mod as unknown as { extractMetadata: ReturnType<typeof vi.fn> }
+  }
+
+  beforeEach(async () => {
+    const sm = await getStegoMock()
+    sm.extractMetadata.mockReset()
+    sm.extractMetadata.mockResolvedValue(validEmbeddedMetadata())
+  })
+
+  it('defaults to online mode', () => {
+    const { result } = renderHook(() => useVerification())
+    expect(result.current.offline).toBe(false)
+  })
+
+  it('setOffline toggles the mode flag', () => {
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+    expect(result.current.offline).toBe(true)
+    act(() => { result.current.setOffline(false) })
+    expect(result.current.offline).toBe(false)
+  })
+
+  it('verifies locally and never touches network services', async () => {
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => {
+      await result.current.verifyEvidence(makeVideoFile())
+    })
+
+    expect(result.current.status).toBe('success')
+    expect(result.current.errorCode).toBeNull()
+    expect(result.current.verifyResult).toMatch(/Locally verified/i)
+    expect(result.current.verifyResult).toMatch(/not checked/i)
+    expect(result.current.verifyHash).toHaveLength(64)
+    expect(result.current.chainProof).toBeNull()
+    expect(result.current.events).toHaveLength(0)
+    // No backend stego API / NeonDB / RPC calls
+    expect(vm.extractMetadata).not.toHaveBeenCalled()
+    expect(vm.fetchProofEventsByVideo).not.toHaveBeenCalled()
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+  })
+
+  it('reports tampered binding as invalid evidence in offline mode', async () => {
+    const sm = await getStegoMock()
+    sm.extractMetadata.mockResolvedValue(validEmbeddedMetadata({ version: 2, videoHash: 'f'.repeat(64) }))
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => {
+      await result.current.verifyEvidence(makeVideoFile())
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.errorCode).toBe('INVALID_EVIDENCE')
+    expect(result.current.verifyResult).toMatch(/does not match/i)
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+  })
+
+  it('reports invalid structures as invalid evidence in offline mode', async () => {
+    const sm = await getStegoMock()
+    sm.extractMetadata.mockResolvedValue(validEmbeddedMetadata({ protocol: 'not-harpocrates' }))
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => {
+      await result.current.verifyEvidence(makeVideoFile())
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.errorCode).toBe('INVALID_EVIDENCE')
+    expect(result.current.verifyResult).toMatch(/failed local validation/i)
+  })
+
+  it('applies input rejection in offline mode without network calls', async () => {
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    const empty = new File([], 'empty.mp4', { type: 'video/mp4' })
+    await act(async () => { await result.current.verifyEvidence(empty) })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.errorCode).toBe('EMPTY_INPUT')
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+  })
+
+  it('maps offline dependency failures to DEPENDENCY_UNAVAILABLE', async () => {
+    const sm = await getStegoMock()
+    sm.extractMetadata.mockRejectedValue(new Error('decode unavailable in this browser'))
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => {
+      await result.current.verifyEvidence(makeVideoFile())
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.errorCode).toBe('DEPENDENCY_UNAVAILABLE')
+    expect(result.current.verifyResult).toMatch(/No trust decision was made/i)
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+  })
+
+  it('retry keeps offline mode', async () => {
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => { await result.current.verifyEvidence(makeVideoFile()) })
+    expect(result.current.verifyResult).toMatch(/Locally verified/i)
+
+    await act(async () => { await result.current.retry() })
+    expect(result.current.verifyResult).toMatch(/Locally verified/i)
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+  })
+
+  it('loadEvents does not fetch when offline', async () => {
+    const em = await getEvidMock()
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => { await result.current.loadEvents() })
+
+    expect(em.fetchRecentEvents).not.toHaveBeenCalled()
+    expect(result.current.events).toHaveLength(0)
+  })
+
+  it('switching back to online uses the network path again', async () => {
+    const vm = await getVerifMock()
+    const { result } = renderHook(() => useVerification())
+
+    act(() => { result.current.setOffline(true) })
+    await act(async () => { await result.current.verifyEvidence(makeVideoFile()) })
+    expect(vm.getOnChainProof).not.toHaveBeenCalled()
+
+    act(() => { result.current.setOffline(false) })
+    await act(async () => { await result.current.verifyEvidence(makeVideoFile()) })
+
+    expect(vm.extractMetadata).toHaveBeenCalled()
+  })
+
+  it('privacy: offline result messages never leak file names or hashes', async () => {
+    const sm = await getStegoMock()
+    sm.extractMetadata.mockRejectedValue(new Error('witness-secret-x'))
+    const { result } = renderHook(() => useVerification())
+    act(() => { result.current.setOffline(true) })
+
+    await act(async () => {
+      await result.current.verifyEvidence(makeVideoFile('evidence.mp4'))
+    })
+
+    expect(result.current.verifyResult).not.toContain('evidence.mp4')
+    expect(result.current.verifyResult).not.toContain('witness-secret-x')
   })
 })

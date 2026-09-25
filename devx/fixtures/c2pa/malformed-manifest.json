@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "malformed-manifest",
+  "specVersion": "c2pa-v1",
+  "manifest": "not-an-object",
+  "assertions": "invalid-array-type",
+  "expect": {
+    "ok": false,
+    "status": "malformed",
+    "errorCode": "ERR_MALFORMED"
+  }
+}

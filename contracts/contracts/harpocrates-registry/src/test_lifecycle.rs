@@ -217,9 +217,10 @@ fn lifecycle_source_emits_history() {
     assert_eq!(history.get(0).unwrap().reason_code, TIER_CONSISTENT_SOURCE);
 
     // Registration has one stable observable order: ProofRegistered first,
-    // then its append-only lifecycle history entry. This also guards the
-    // batch path, which uses the same save_record helper.
-    assert_eq!(events.events().len(), 2);
+    // then its append-only lifecycle history entry, then the #317 metadata
+    // envelope auto-stamp. This also guards the batch path, which uses the
+    // same save_record helper.
+    assert_eq!(events.events().len(), 3);
     use soroban_sdk::xdr::ContractEventBody;
     use soroban_sdk::{TryFromVal as _, TryIntoVal as _};
 

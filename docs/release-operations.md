@@ -47,6 +47,32 @@ crypto-domain, metadata, and digest outcomes. Digest drift is reported as
 artifact pins are refreshed. Use `--strict` when digests must match exactly.
 The report never includes media, witnesses, credentials, proofs, or secrets.
 
+## C2PA Interoperability & Bounded Parser
+
+External C2PA manifests entering Harpocrates boundaries are parsed using the bounded parser (`devx/c2pa_parser.py` and `devx/validate_c2pa_manifests.py`).
+
+### Parser Bounds & Limits
+* Maximum input payload: 256 KiB (`MAX_C2PA_PAYLOAD_BYTES = 256 * 1024`).
+* Maximum nesting depth: 8 levels (`MAX_MANIFEST_DEPTH = 8`).
+* Maximum assertions array length: 32 (`MAX_ASSERTIONS_COUNT = 32`).
+* Maximum ingredients array length: 16 (`MAX_INGREDIENTS_COUNT = 16`).
+* Maximum field string length: 256 chars (`MAX_FIELD_LENGTH = 256`).
+
+### Input Classification & Failure Behaviors
+* `valid`: Valid JSON and C2PA structure; extracted Harpocrates metadata (if present) is mapped to canonical metadata representation.
+* `malformed`: JSON syntax error, invalid types, or invalid data structures (`ERR_MALFORMED`).
+* `oversized`: Input exceeds size, depth, or collection bounds (`ERR_OVERSIZED`).
+* `unsupported`: Unsupported spec version (`ERR_UNSUPPORTED_VERSION`).
+* `expired`: Expired claim or certificate (`ERR_EXPIRED`).
+* `revoked`: Revoked assertion status (`ERR_REVOKED`).
+* `dependency_failure`: Parser or library execution failure (`ERR_DEPENDENCY_FAILURE`).
+
+### Privacy & Trust Boundaries
+* Imported C2PA manifests are untrusted external input and do NOT constitute verified Harpocrates proofs on their own.
+* Sensitive fields (passwords, secrets, private keys, witness values, nullifiers, credentials, proof bytes, tokens) are strictly redacted to `[REDACTED]`.
+* Raw media, private keys, witness values, or credentials are never logged or returned in error messages.
+* No DB schema or protocol migration is required for C2PA manifest imports.
+
 ## Release state machine
 
 `candidate -> staged -> active` is the forward path. `candidate` is valid for

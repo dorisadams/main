@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "revoked-manifest",
+  "specVersion": "c2pa-v1",
+  "status": "revoked",
+  "assertions": [],
+  "expect": {
+    "ok": false,
+    "status": "revoked",
+    "errorCode": "ERR_REVOKED"
+  }
+}

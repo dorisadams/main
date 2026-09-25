@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "unsupported-version",
+  "specVersion": "c2pa-v9999-unsupported",
+  "assertions": [],
+  "expect": {
+    "ok": false,
+    "status": "unsupported",
+    "errorCode": "ERR_UNSUPPORTED_VERSION"
+  }
+}

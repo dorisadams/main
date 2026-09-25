@@ -68,6 +68,13 @@ from retention import init_retention_worker
 from metrics import collector as metrics_collector
 from noir import generate_silent_witness, generate_aggregated_proof
 from envelope import ALLOWED_TIERS, validate_v2 as validate_embed_metadata
+from metadata_errors import (
+    METADATA_MALFORMED,
+    METADATA_OVERSIZED,
+    MetadataError,
+    classify_validation_error,
+    metadata_error_response,
+)
 from schema import discover_schemas, resolve_schema, validate_selective_disclosure_input
 from stego import canonical_metadata_hash, embed_metadata, extract_metadata, sha256_file
 from logging_utils import log_structured, redact_sensitive
@@ -321,6 +328,10 @@ def create_app() -> Flask:
 
     @app.errorhandler(ValueError)
     def bad_request(error: ValueError):
+        # Metadata failures carry a canonical taxonomy code; serialize them
+        # with the shared metadata envelope so every boundary agrees.
+        if isinstance(error, MetadataError):
+            return metadata_error_response(error)
         return error_response(
             code=VALIDATION_ERROR,
             message=str(error),
@@ -457,24 +468,22 @@ def create_app() -> Flask:
             return jsonify({"error": "video payload exceeds size limit"}), 413
         validate_video_upload(video)
         if len(metadata_raw.encode("utf-8")) > config.max_metadata_bytes:
-            return jsonify({"error": "metadata is too large"}), 413
+            return metadata_error_response(
+                MetadataError(METADATA_OVERSIZED, "metadata is too large")
+            )
 
         try:
             metadata = json.loads(metadata_raw)
         except json.JSONDecodeError:
-            return error_response(
-                code=VALIDATION_ERROR,
-                message="metadata must be valid JSON",
-                status=400,
+            return metadata_error_response(
+                MetadataError(METADATA_MALFORMED, "metadata must be valid JSON")
             )
         try:
             validate_embed_metadata(metadata)
+        except MetadataError as exc:
+            return metadata_error_response(exc)
         except ValueError as exc:
-            return error_response(
-                code=VALIDATION_ERROR,
-                message=str(exc),
-                status=400,
-            )
+            return metadata_error_response(classify_validation_error(exc))
 
         try:
             quarantine_context = isolate_upload(
@@ -576,11 +585,15 @@ def create_app() -> Flask:
         try:
             metadata = json.loads(metadata_raw)
         except json.JSONDecodeError:
-            return jsonify({"error": "metadata must be valid JSON"}), 400
+            return metadata_error_response(
+                MetadataError(METADATA_MALFORMED, "metadata must be valid JSON")
+            )
         try:
             validate_embed_metadata(metadata)
+        except MetadataError as exc:
+            return metadata_error_response(exc)
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return metadata_error_response(classify_validation_error(exc))
 
         combined_path = session_dir / "combined.video"
         chunk_files = sorted(

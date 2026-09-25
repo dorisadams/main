@@ -9,6 +9,20 @@ vi.mock('./components/EvilEye', () => ({
   default: () => <div data-testid="evil-eye" />,
 }))
 
+// Offline mode extracts via the local stego loader; in jsdom the real video
+// decode never settles, so stub it deterministically.
+vi.mock('./stego', () => ({
+  extractMetadata: vi.fn().mockResolvedValue({
+    protocol: 'harpocrates',
+    version: 1,
+    tier: 'silent',
+    sourceHash: 'a'.repeat(64),
+    proofId: 'b'.repeat(64),
+    timestamp: '2026-01-01T00:00:00.000Z',
+  }),
+  MalformedEvidenceError: class MalformedEvidenceError extends Error {},
+}))
+
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -90,6 +104,32 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: /batch workspace/i }))
 
     expect(screen.getByRole('heading', { level: 2, name: /evidence batch verification workspace/i })).toBeInTheDocument()
+  })
+
+  it('offline mode verifies locally with zero network calls', async () => {
+    const user = userEvent.setup()
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('must not fetch in offline mode'))
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /^verify$/i }))
+
+    const toggle = screen.getByRole('button', { name: /offline local check/i })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(/runs fully local/i)).toBeInTheDocument()
+    expect(screen.getByText(/not checked \(offline\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/on-chain status was not checked in offline mode/i)).toBeInTheDocument()
+    expect(screen.getByText(/neondb events were not queried in offline mode/i)).toBeInTheDocument()
+
+    await user.upload(screen.getByLabelText(/drop or choose a received video/i), new File(['video'], 'clip.mp4', {
+      type: 'video/mp4',
+    }))
+
+    expect(await screen.findByText(/locally verified/i)).toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.getByText(/offline mode produces no shareable verification link/i)).toBeInTheDocument()
   })
 
   // ── Accessibility improvements ──────────────────────────────────────────────

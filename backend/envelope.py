@@ -6,6 +6,15 @@ import zlib
 from typing import Any
 from datetime import datetime, timezone, timedelta
 
+from metadata_errors import (
+    METADATA_INVALID_FIELD,
+    METADATA_MALFORMED,
+    METADATA_MISSING_FIELD,
+    METADATA_OVERSIZED,
+    METADATA_UNSUPPORTED_VERSION,
+    MetadataError,
+)
+
 MAGIC_V1 = b"HRPSTG1"
 MAGIC_V2 = b"HRPSTG2"
 MAX_PAYLOAD_BYTES = 64 * 1024
@@ -39,31 +48,68 @@ def _is_hex_32(value: Any) -> bool:
 
 def _validate_timestamp(value: Any) -> None:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("metadata timestamp must be a string")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata timestamp must be a string",
+            field="timestamp",
+        )
     ts = value.strip().replace("Z", "+00:00").replace("z", "+00:00")
     try:
         dt = datetime.fromisoformat(ts)
     except ValueError:
-        raise ValueError("metadata timestamp must be a timezone-aware ISO-8601 string")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata timestamp must be a timezone-aware ISO-8601 string",
+            field="timestamp",
+        )
     if dt.tzinfo is None:
-        raise ValueError("metadata timestamp must be timezone-aware")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata timestamp must be timezone-aware",
+            field="timestamp",
+        )
     if dt > datetime.now(timezone.utc) + timedelta(seconds=300):
-        raise ValueError("metadata timestamp is unreasonably far in the future")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata timestamp is unreasonably far in the future",
+            field="timestamp",
+        )
 
 
 def validate_v1(metadata: dict[str, Any]) -> None:
     required = {"protocol", "version", "tier", "sourceHash", "proofId", "timestamp"}
     missing = required - set(metadata.keys())
     if missing:
-        raise ValueError(f"metadata missing required field: {sorted(missing)[0]}")
+        field = sorted(missing)[0]
+        raise MetadataError(
+            METADATA_MISSING_FIELD,
+            f"metadata missing required field: {field}",
+            field=field,
+        )
     if metadata.get("protocol") != "harpocrates":
-        raise ValueError("metadata protocol must be harpocrates")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata protocol must be harpocrates",
+            field="protocol",
+        )
     if metadata.get("tier") not in ALLOWED_TIERS:
-        raise ValueError("metadata tier is invalid")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata tier is invalid",
+            field="tier",
+        )
     if not _is_hex_32(metadata.get("sourceHash")):
-        raise ValueError("metadata sourceHash must be a 32-byte hex string")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata sourceHash must be a 32-byte hex string",
+            field="sourceHash",
+        )
     if not _is_hex_32(metadata.get("proofId")):
-        raise ValueError("metadata proofId must be a 32-byte hex string")
+        raise MetadataError(
+            METADATA_INVALID_FIELD,
+            "metadata proofId must be a 32-byte hex string",
+            field="proofId",
+        )
     _validate_timestamp(metadata.get("timestamp"))
 
 
@@ -72,7 +118,7 @@ def validate_v2(metadata: dict[str, Any]) -> dict[str, Any]:
     # Actually, to make it canonical and safe, we can enforce strict schema or pass through.
     # The requirement is "unknown-field behavior". Let's preserve unknown fields in V2 for forward compat.
     if not isinstance(metadata, dict):
-        raise ValueError("metadata must be a JSON object")
+        raise MetadataError(METADATA_MALFORMED, "metadata must be a JSON object")
     
     # Require same base fields
     validate_v1(metadata)
@@ -93,17 +139,26 @@ def pack_envelope(metadata: dict[str, Any], version: int = 2) -> bytes:
         metadata = validate_v2(dict(metadata))  # Copy and validate/upgrade
         magic = MAGIC_V2
     else:
-        raise ValueError(f"unsupported metadata version {version}")
+        raise MetadataError(
+            METADATA_UNSUPPORTED_VERSION,
+            f"unsupported metadata version {version}",
+        )
 
     canonical = _canonical_json(metadata)
     # Bound the metadata itself, not just its compressed form: a highly
     # compressible field must not be able to smuggle an oversized payload.
     if len(canonical) > MAX_DECOMPRESSED_BYTES:
-        raise ValueError("metadata payload exceeds the 64 KiB steganography limit")
+        raise MetadataError(
+            METADATA_OVERSIZED,
+            "metadata payload exceeds the 64 KiB steganography limit",
+        )
 
     body = zlib.compress(canonical, level=9)
     if len(body) > MAX_PAYLOAD_BYTES:
-        raise ValueError("metadata payload exceeds the 64 KiB steganography limit")
+        raise MetadataError(
+            METADATA_OVERSIZED,
+            "metadata payload exceeds the 64 KiB steganography limit",
+        )
 
     checksum = hashlib.sha256(body).digest()
     return magic + struct.pack(">I", len(body)) + checksum + body

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { BadgeCheck, CheckCircle2, Loader2, Upload } from 'lucide-react'
+import { BadgeCheck, CheckCircle2, Loader2, Upload, XCircle } from 'lucide-react'
 import type { UseEvidenceReturn } from '../hooks/useEvidence'
 import { TIERS } from '../hooks/useEvidence'
 import type { UseVerificationReturn } from '../hooks/useVerification'
@@ -40,11 +40,13 @@ export function StudioView({ wallet, evidence, verification, provenanceRecord }:
     networkMismatch,
     handleEvidence,
     registerProof,
+    cancelProving,
   } = evidence
 
   const { verifyHash, verifyResult, events, chainProof, verifyEvidence, loadEvents } = verification
 
   const { statusLabel, isBusy } = useA11yStage(stage)
+  const isProving = stage === 'proving'
 
   const shareLinkInput = useMemo((): VerificationShareLinkInput | null => {
     if (!proof?.videoHash || !proof.proofId || !proof.metadataHash || !CONTRACT_ID) return null
@@ -176,20 +178,34 @@ export function StudioView({ wallet, evidence, verification, provenanceRecord }:
           </a>
         ) : null}
 
-        <button
-          className="primary-action"
-          type="button"
-          disabled={!proof || !!networkMismatch || isBusy}
-          aria-busy={isBusy || undefined}
-          onClick={() => void registerProof(wallet)}
-        >
-          {isBusy ? (
-            <Loader2 className="spin" size={18} aria-hidden="true" />
-          ) : (
-            <BadgeCheck size={18} aria-hidden="true" />
-          )}
-          Register proof
-        </button>
+        <div className="action-row" style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            className="primary-action"
+            type="button"
+            disabled={!proof || !!networkMismatch || isBusy}
+            aria-busy={isBusy || undefined}
+            onClick={() => void registerProof(wallet)}
+          >
+            {isBusy ? (
+              <Loader2 className="spin" size={18} aria-hidden="true" />
+            ) : (
+              <BadgeCheck size={18} aria-hidden="true" />
+            )}
+            Register proof
+          </button>
+
+          {isProving ? (
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => cancelProving()}
+              aria-label="Cancel proof generation"
+            >
+              <XCircle size={18} aria-hidden="true" />
+              Cancel proving
+            </button>
+          ) : null}
+        </div>
 
         <ShareVerificationLink input={shareLinkInput} />
       </div>

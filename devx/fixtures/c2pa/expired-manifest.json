@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "expired-manifest",
+  "specVersion": "c2pa-v1",
+  "status": "expired",
+  "validUntil": "2020-01-01T00:00:00Z",
+  "assertions": [],
+  "expect": {
+    "ok": false,
+    "status": "expired",
+    "errorCode": "ERR_EXPIRED"
+  }
+}

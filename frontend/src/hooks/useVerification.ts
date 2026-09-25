@@ -1,6 +1,12 @@
 /**
  * useVerification — manages the verification portal flow:
- * local hash → stego extract → NeonDB lookup → on-chain query.
+ * local hash → stego extract → NeonDB lookup → on-chain query (online),
+ * or a fully local, offline-safe equivalent (offline mode).
+ *
+ * Offline mode makes ZERO network calls: it hashes and extracts locally and
+ * performs structural/binding checks only. It never yields a confirmed trust
+ * decision — chain/registry status is reported as not checked. See
+ * `offlineVerification.ts`.
  *
  * Mobile-hardened: input validation, AbortController cancellation, stale-result
  * guard, and privacy-safe error codes. No raw evidence, media, or secrets are
@@ -75,6 +81,9 @@ export type UseVerificationReturn = {
   status: VerificationStatus
   errorCode: VerificationErrorCode | null
   isVerifying: boolean
+  /** True when verification runs fully offline (no network calls). */
+  offline: boolean
+  setOffline: (next: boolean) => void
   verifyEvidence: (file: File | null, walletAddress?: string) => Promise<void>
   loadEvents: () => Promise<void>
   cancel: () => void
@@ -89,6 +98,14 @@ export function useVerification(): UseVerificationReturn {
   const [chainProof, setChainProof] = useState<ChainProofRecord | null>(null)
   const [status, setStatus] = useState<VerificationStatus>('idle')
   const [errorCode, setErrorCode] = useState<VerificationErrorCode | null>(null)
+  // Offline mode mirrors the user-visible toggle so retries/effect reads stay
+  // consistent even when the toggle could change mid-flow.
+  const [offline, setOfflineState] = useState(false)
+  const offlineRef = useRef(false)
+  const setOffline = useCallback((next: boolean) => {
+    offlineRef.current = next
+    setOfflineState(next)
+  }, [])
 
   const seqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -119,6 +136,8 @@ export function useVerification(): UseVerificationReturn {
   }, [])
 
   const loadEvents = useCallback(async () => {
+    // Offline mode never reaches the NeonDB feed.
+    if (offlineRef.current) return
     try {
       const { fetchRecentEvents } = await import('../services/evidenceService')
       const loaded = await fetchRecentEvents(6)
@@ -265,6 +284,100 @@ export function useVerification(): UseVerificationReturn {
     }
   }, [])
 
+  /**
+   * Local-only verification: hash + extract + structural/binding checks.
+   * Never touches verificationService (no stego API, no NeonDB, no RPC), never
+   * queries events or chain state, and never produces a trust confirmation.
+   */
+  const runOfflineVerify = useCallback(async (file: File, seq: number, signal: AbortSignal) => {
+    // Validate synchronously before any expensive work
+    const validated = validateFile(file)
+    if (!validated.ok) {
+      if (seq !== seqRef.current) return
+      setStatus('error')
+      setErrorCode(validated.code)
+      setVerifyResult(SAFE_MESSAGES[validated.code])
+      // keep hash empty so UI does not show stale hash for rejected input
+      return
+    }
+
+    setStatus('hashing')
+    setErrorCode(null)
+    setVerifyResult('Hashing evidence locally…')
+    setChainProof(null)
+    setEvents([])
+
+    let videoHash: string
+    try {
+      const { sha256 } = await import('../utils')
+      // Allow early abort before reading
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      const buffer = await file.arrayBuffer()
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      videoHash = await sha256(buffer)
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (seq !== seqRef.current) return
+      setVerifyHash(videoHash)
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        if (seq !== seqRef.current) return
+        setStatus('cancelled')
+        setErrorCode('CANCELLED')
+        setVerifyResult(SAFE_MESSAGES.CANCELLED)
+        return
+      }
+      if (seq !== seqRef.current) return
+      setStatus('error')
+      setErrorCode('INVALID_EVIDENCE')
+      setVerifyResult(SAFE_MESSAGES.INVALID_EVIDENCE)
+      return
+    }
+
+    setStatus('verifying')
+    setVerifyResult('Inspecting evidence locally…')
+
+    try {
+      const { verifyOffline } = await import('../offlineVerification')
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      const result = await verifyOffline(file, { signal })
+      if (seq !== seqRef.current) return
+
+      if (result.outcome === 'cancelled') {
+        setStatus('cancelled')
+        setErrorCode('CANCELLED')
+        setVerifyResult(result.message)
+        return
+      }
+      if (result.outcome === 'verified-local') {
+        setStatus('success')
+        setErrorCode(null)
+        setVerifyResult(result.message)
+        return
+      }
+      if (result.errorCode) {
+        setStatus('error')
+        setErrorCode(result.errorCode)
+        setVerifyResult(result.message)
+        return
+      }
+      setStatus('error')
+      setErrorCode('VERIFICATION_FAILED')
+      setVerifyResult(SAFE_MESSAGES.VERIFICATION_FAILED)
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        if (seq !== seqRef.current) return
+        setStatus('cancelled')
+        setErrorCode('CANCELLED')
+        setVerifyResult(SAFE_MESSAGES.CANCELLED)
+        return
+      }
+      if (seq !== seqRef.current) return
+      setStatus('error')
+      setErrorCode('DEPENDENCY_UNAVAILABLE')
+      setVerifyResult(SAFE_MESSAGES.DEPENDENCY_UNAVAILABLE)
+    }
+  }, [])
+
   const verifyEvidence = useCallback(async (file: File | null, walletAddress?: string) => {
     if (!file) return
     lastFileRef.current = { file, wallet: walletAddress }
@@ -275,8 +388,12 @@ export function useVerification(): UseVerificationReturn {
     seqRef.current += 1
     const seq = seqRef.current
     setStatus('validating')
-    await runVerify(file, walletAddress, seq, controller.signal)
-  }, [runVerify])
+    if (offlineRef.current) {
+      await runOfflineVerify(file, seq, controller.signal)
+    } else {
+      await runVerify(file, walletAddress, seq, controller.signal)
+    }
+  }, [runVerify, runOfflineVerify])
 
   const retry = useCallback(async () => {
     const last = lastFileRef.current
@@ -298,6 +415,8 @@ export function useVerification(): UseVerificationReturn {
     status,
     errorCode,
     isVerifying,
+    offline,
+    setOffline,
     verifyEvidence,
     loadEvents,
     cancel,
