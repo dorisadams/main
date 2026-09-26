@@ -160,8 +160,11 @@ export function validateCsp(policy: string): string[] {
   }
 
   // unsafe-eval (wasm-unsafe-eval is allowed; raw unsafe-eval is not).
+  // The message must not contain the substring "wasm": callers distinguish
+  // the forbidden raw 'unsafe-eval' token from the allowed 'wasm-unsafe-eval'
+  // by scanning the message itself.
   if (values('script-src').includes("'unsafe-eval'")) {
-    violations.push("script-src contains 'unsafe-eval'; use 'wasm-unsafe-eval' instead")
+    violations.push("script-src contains 'unsafe-eval'")
   }
 
   // frame-ancestors must be present.

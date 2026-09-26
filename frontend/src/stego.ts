@@ -3,6 +3,8 @@ import { inflate as pakoInflate } from 'pako'
 const MAGIC = new TextEncoder().encode('HRPSTG1')
 const MAX_PAYLOAD_BYTES = 64 * 1024
 const BORDER_BLOCK = 6
+/** Upper bound for the media element to reach loadedmetadata before failing closed. */
+const METADATA_LOAD_TIMEOUT_MS = 3_000
 const BORDER_STRIDE = 2
 
 export class MalformedEvidenceError extends Error {
@@ -118,7 +120,17 @@ export async function extractMetadata(file: File): Promise<unknown> {
     video.muted = true
     video.playsInline = true
 
+    // Fail closed if the element never reaches loadedmetadata (unsupported
+    // codec, blocked autoplay policy, or a non-browser environment such as
+    // jsdom where media elements fire no events).  Without this guard the
+    // returned promise can stay pending forever and stall batch verification.
+    const loadTimeoutId = setTimeout(() => {
+      video.onerror = null
+      URL.revokeObjectURL(video.src)
+      reject(new MalformedEvidenceError())
+    }, METADATA_LOAD_TIMEOUT_MS)
     video.onloadedmetadata = () => {
+      clearTimeout(loadTimeoutId)
       const width = video.videoWidth
       const height = video.videoHeight
       const canvas = document.createElement('canvas')
@@ -211,6 +223,7 @@ export async function extractMetadata(file: File): Promise<unknown> {
     }
 
     video.onerror = () => {
+      clearTimeout(loadTimeoutId)
       URL.revokeObjectURL(video.src)
       reject(new MalformedEvidenceError())
     }

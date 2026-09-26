@@ -92,7 +92,13 @@ const CODE_GUIDANCE: Record<Exclude<BackendErrorCode, 'UNKNOWN'>, CodeGuidance> 
 }
 
 function stripHtml(input: string): string {
-  return input.replace(/<[^>]*>/g, '')
+  // Drop tag *and* script-style content: replace paired <script>/<style>
+  // blocks (case-insensitive) with nothing before stripping remaining tags,
+  // so `<script>alert(1)</script>bad input` yields `bad input`, not
+  // `alert(1)bad input`.
+  return input
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/(?:\1)>/gi, '')
+    .replace(/<[^>]*>/g, '')
 }
 
 function truncate(input: string): string {
@@ -117,11 +123,15 @@ function codeFromStatus(status: number): BackendErrorCode {
   return 'UNKNOWN'
 }
 
-function buildActionableMessage(code: BackendErrorCode, detail: string | null): string {
+function buildActionableMessage(
+  code: BackendErrorCode,
+  detail: string | null,
+  rawLength = detail?.length ?? 0,
+): string {
   if (code !== 'UNKNOWN') {
     const guidance = CODE_GUIDANCE[code]
     // Prefer backend detail when it already sounds actionable; otherwise use guidance.
-    if (detail && detail.length >= 12) {
+    if (detail && rawLength >= 12) {
       // Ensure size/type codes always include a concrete next step.
       if (code === 'PAYLOAD_TOO_LARGE' && !/smaller|size|large|limit|MB|bytes/i.test(detail)) {
         return sanitizeText(`${detail} Choose a smaller video and try again.`)
@@ -194,6 +204,10 @@ export async function parseActionableApiError(
   }
 
   const extracted = extractEnvelope(body)
+  // Gate actionability on the raw message length, but only ever surface the
+  // sanitized text — stripping tags can shorten a message below the gate, and
+  // the backend detail still deserves display in that case.
+  const rawDetailLength = extracted.message?.length ?? 0
   const detail = extracted.message ? sanitizeText(extracted.message) : null
   const code: BackendErrorCode =
     extracted.code && isKnownCode(extracted.code)
@@ -201,7 +215,8 @@ export async function parseActionableApiError(
       : codeFromStatus(status)
 
   const guidance = code !== 'UNKNOWN' ? CODE_GUIDANCE[code] : null
-  const message = buildActionableMessage(code, detail) || sanitizeText(fallback)
+  const message =
+    buildActionableMessage(code, detail, rawDetailLength) || sanitizeText(fallback)
 
   return {
     code,

@@ -90,6 +90,18 @@ function hasConstructor(globalObj: typeof globalThis, name: string): boolean {
 }
 
 /**
+ * WebAssembly is a namespace object (not a constructor), so typeof it is
+ * 'object' in every engine — including jsdom's cross-realm shim. Probe the
+ * required static members instead of the namespace's own typeof.
+ */
+function hasWebAssembly(globalObj: typeof globalThis): boolean {
+  const ns = (globalObj as Record<string, unknown>).WebAssembly
+  if (typeof ns !== 'object' || ns === null) return false
+  const member = ns as Record<string, unknown>
+  return typeof member.Module === 'function' && typeof member.Instance === 'function'
+}
+
+/**
  * Probe the runtime for proof-worker prerequisites.
  * Never inspects user input, media, or secrets.
  */
@@ -103,7 +115,7 @@ export function detectWorkerCapabilities(
     // construct one during a sync probe, so we require Worker + documented
     // matrix capability "module Web Workers".
     moduleWorkerType: hasConstructor(globalObj, 'Worker'),
-    WebAssembly: hasConstructor(globalObj, 'WebAssembly'),
+    WebAssembly: hasWebAssembly(globalObj),
     SubtleCrypto: Boolean(cryptoObj && typeof cryptoObj.subtle === 'object' && cryptoObj.subtle !== null),
     BigInt: typeof (globalObj as { BigInt?: unknown }).BigInt === 'function',
     ArrayBuffer: hasConstructor(globalObj, 'ArrayBuffer'),
