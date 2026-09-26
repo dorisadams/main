@@ -300,6 +300,38 @@ check on. Existing callers are unchanged; this is an additive gate.
 inert again, or revert the publish under `frontend/public/noir/` and regenerate
 with `write-browser`.
 
+## Known divergence: silent_witness source vs published artifacts (do not
+republish blindly)
+
+As of the #336 branch, `zk/noir/silent_witness/src/main.nr` and
+`zk/noir/silent_witness_helper/src/main.nr` carry the scoped-nullifier v1
+extension (`verifier_scope`, `epoch`, and — main only — `domain_tag` as extra
+inputs), while the committed browser artifacts under
+`frontend/public/noir/silent_witness{,_helper}.json` and the deployed
+verifier boundary (`contracts/.../src/verifier_inputs.rs` and
+`backend/verifier_inputs.py`, both pinning a 160-byte / 5-public-input frame
+for `silent_witness/v1`) still implement the pre-scoping ABI.
+
+Consequences:
+
+- The committed artifacts match the deployed verifiers; end-to-end proof
+  generation against the current on-chain/backend boundary works.
+- Republishing artifacts compiled from the current sources would produce
+  ACIR for a circuit emitting a 7-public-input (224-byte) frame, which
+  **neither** deployed verifier accepts — silently breaking
+  verification for every browser client.
+- The frontend `noirClient.ts` sends scope/epoch inputs that the committed
+  artifacts ignore; harmless today (extra keys are dropped by the ABI), but
+  it must be revisited in the same coordinated change that ships the new
+  frame.
+
+Closing this divergence is a coordinated zk release: compile the scoped
+circuits, extend `verifier_inputs` in the contract, backend, and TypeScript
+verifier layers in the same change, regenerate the conformance vectors, and
+only then republish under `frontend/public/noir/` and refresh
+`zk/browser.artifacts.manifest.json`. Do not run the artifact-update workflow
+below for `silent_witness{,_helper}` until that lands.
+
 ## Limitations
 
 - The double-build check runs twice on the *same* host. It catches
